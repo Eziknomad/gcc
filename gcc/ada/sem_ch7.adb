@@ -1406,7 +1406,7 @@ package body Sem_Ch7 is
 
       begin
          if Id = Cunit_Entity (Main_Unit)
-           or else Parent (Decl) = Library_Unit (Cunit (Main_Unit))
+           or else Parent (Decl) = Other_Comp_Unit (Cunit (Main_Unit))
          then
             Generate_Reference (Id, Scope (Id), 'k', False);
 
@@ -1422,7 +1422,7 @@ package body Sem_Ch7 is
 
             begin
                if Nkind (Main_Spec) = N_Package_Body then
-                  Main_Spec := Unit (Library_Unit (Cunit (Main_Unit)));
+                  Main_Spec := Unit (Other_Comp_Unit (Cunit (Main_Unit)));
                end if;
 
                U := Parent_Spec (Main_Spec);
@@ -2919,6 +2919,7 @@ package body Sem_Ch7 is
                                      (Priv, Has_Pragma_Unreferenced_Objects
                                                                        (Full));
          Set_Predicates_Ignored      (Priv, Predicates_Ignored         (Full));
+
          if Is_Unchecked_Union (Full) then
             Set_Is_Unchecked_Union (Base_Type (Priv));
          end if;
@@ -2928,14 +2929,8 @@ package body Sem_Ch7 is
          end if;
 
          if Priv_Is_Base_Type then
-            Set_Is_Controlled_Active
-                              (Priv, Is_Controlled_Active     (Full_Base));
-            Set_Finalize_Storage_Only
-                              (Priv, Finalize_Storage_Only    (Full_Base));
-            Set_Has_Controlled_Component
-                              (Priv, Has_Controlled_Component (Full_Base));
-
-            Propagate_Concurrent_Flags (Priv, Base_Type (Full));
+            Propagate_Concurrent_Flags (Priv, Full_Base);
+            Propagate_Controlled_Flags (Priv, Full_Base);
          end if;
 
          --  As explained in Freeze_Entity, private types are required to point
@@ -3379,6 +3374,9 @@ package body Sem_Ch7 is
                   Next_Elmt (Elmt);
                end loop;
             end;
+
+            Set_Is_Hidden (Id);
+            Set_Is_Potentially_Use_Visible (Id, False);
 
          --  For subtypes of private types the frontend generates two entities:
          --  one associated with the partial view and the other associated with

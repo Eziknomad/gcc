@@ -101,12 +101,6 @@
 
 #define LONG_LONG_TYPE_SIZE 64
 
-#define FLOAT_TYPE_SIZE 32
-
-#define DOUBLE_TYPE_SIZE 64
-
-#define LONG_DOUBLE_TYPE_SIZE 64
-
 #define DEFAULT_SIGNED_CHAR 0
 
 #define SIZE_TYPE "unsigned int"
@@ -298,7 +292,7 @@ enum reg_class
 
 /* This declaration must be present, but it can be an abort if profiling is
    not implemented.  */
-     
+
 #define FUNCTION_PROFILER(FILE, LABELNO) xstormy16_function_profiler ()
 
 

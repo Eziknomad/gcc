@@ -639,8 +639,9 @@ add_scope_conflicts_1 (basic_block bb, bitmap work, bool for_conflict)
 	{
 	  tree lhs = gimple_assign_lhs (stmt);
 	  unsigned *v;
-	  /* Nested function lowering might introduce LHSs
-	     that are COMPONENT_REFs.  */
+	  /* Handle only plain var clobbers.
+	     Nested functions lowering and C++ front-end inserts clobbers
+	     which are not just plain variables.  */
 	  if (!VAR_P (lhs))
 	    continue;
 	  if (DECL_RTL_IF_SET (lhs) == pc_rtx
@@ -701,6 +702,11 @@ add_scope_conflicts_1 (basic_block bb, bitmap work, bool for_conflict)
 static void
 add_scope_conflicts (void)
 {
+  /* If there is only one variable, there is nothing to be done as
+     there is only possible partition.  */
+  if (stack_vars_num == 1)
+    return;
+
   basic_block bb;
   bool changed;
   bitmap work = BITMAP_ALLOC (NULL);
@@ -2186,7 +2192,7 @@ static bool
 stack_protect_return_slot_p ()
 {
   basic_block bb;
-  
+
   FOR_ALL_BB_FN (bb, cfun)
     for (gimple_stmt_iterator gsi = gsi_start_bb (bb);
 	 !gsi_end_p (gsi); gsi_next (&gsi))
@@ -3121,7 +3127,7 @@ expand_asm_stmt (gasm *stmt)
 
   location_t locus = gimple_location (stmt);
 
-  if (gimple_asm_input_p (stmt))
+  if (gimple_asm_basic_p (stmt))
     {
       const char *s = gimple_asm_string (stmt);
       tree string = build_string (strlen (s), s);
@@ -3611,7 +3617,7 @@ expand_asm_stmt (gasm *stmt)
       ASM_OPERANDS_OUTPUT_CONSTRAINT (body) = constraints[0];
       if (nlabels > 0)
 	emit_jump_insn (gen_rtx_SET (output_rvec[0], body));
-      else 
+      else
 	emit_insn (gen_rtx_SET (output_rvec[0], body));
     }
   else
@@ -4066,8 +4072,13 @@ expand_gimple_stmt_1 (gimple *stmt)
 	    else
 	      {
 		temp = force_operand (temp, target);
-		if (temp != target)
+		if (temp == target)
+		  ;
+		else if (GET_MODE (target) != BLKmode)
 		  emit_move_insn (target, temp);
+		else
+		  emit_block_move (target, temp, expr_size (lhs),
+				   BLOCK_OP_NORMAL);
 	      }
 	  }
       }
@@ -4867,7 +4878,7 @@ expand_debug_expr (tree exp)
 		if (maybe_gt (bitsize, MAX_BITSIZE_MODE_ANY_INT))
 		  return NULL;
 		/* Bitfield.  */
-		mode1 = smallest_int_mode_for_size (bitsize);
+		mode1 = smallest_int_mode_for_size (bitsize).require ();
 	      }
 	    poly_int64 bytepos = bits_to_bytes_round_down (bitpos);
 	    if (maybe_ne (bytepos, 0))

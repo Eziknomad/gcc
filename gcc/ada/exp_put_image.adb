@@ -26,16 +26,19 @@
 with Aspects;        use Aspects;
 with Atree;          use Atree;
 with Csets;          use Csets;
+with Debug;          use Debug;
 with Einfo;          use Einfo;
 with Einfo.Entities; use Einfo.Entities;
 with Einfo.Utils;    use Einfo.Utils;
 with Exp_Tss;        use Exp_Tss;
 with Exp_Util;       use Exp_Util;
 with Lib;            use Lib;
+with Mutably_Tagged; use Mutably_Tagged;
 with Namet;          use Namet;
 with Nlists;         use Nlists;
 with Nmake;          use Nmake;
 with Opt;            use Opt;
+with Output;         use Output;
 with Rtsfind;        use Rtsfind;
 with Sem_Aux;        use Sem_Aux;
 with Sem_Util;       use Sem_Util;
@@ -292,10 +295,9 @@ package body Exp_Put_Image is
       Loc     : constant Source_Ptr := Sloc (N);
       P_Type  : constant Entity_Id  := Entity (Prefix (N));
       U_Type  : constant Entity_Id  := Underlying_Type (P_Type);
-      FST     : constant Entity_Id  := First_Subtype (U_Type);
       Sink    : constant Node_Id    := First (Expressions (N));
       Item    : constant Node_Id    := Next (Sink);
-      P_Size  : constant Uint       := Esize (FST);
+      P_Size  : constant Uint       := Esize (U_Type);
       Lib_RE  : RE_Id;
 
    begin
@@ -402,9 +404,9 @@ package body Exp_Put_Image is
       end;
    end Build_Elementary_Put_Image_Call;
 
-   -------------------------------------
+   ---------------------------------
    -- Build_String_Put_Image_Call --
-   -------------------------------------
+   ---------------------------------
 
    function Build_String_Put_Image_Call (N : Node_Id) return Node_Id is
       Loc     : constant Source_Ptr := Sloc (N);
@@ -416,14 +418,48 @@ package body Exp_Put_Image is
       Lib_RE  : RE_Id;
       use Stand;
    begin
+      pragma Assert (Is_String_Type (U_Type));
+      pragma Assert (not RTU_Loaded (Interfaces_C)
+        or else Enclosing_Lib_Unit_Entity (U_Type)
+                  /= RTU_Entity (Interfaces_C));
+
       if R = Standard_String then
          Lib_RE := RE_Put_Image_String;
       elsif R = Standard_Wide_String then
          Lib_RE := RE_Put_Image_Wide_String;
       elsif R = Standard_Wide_Wide_String then
          Lib_RE := RE_Put_Image_Wide_Wide_String;
+
       else
-         raise Program_Error;
+         --  Handle custom string types. For example:
+
+         --     type T is array (1 .. 10) of Character;
+         --     Obj : T := (others => 'A');
+         --     ...
+         --     Put (Obj'Image);
+
+         declare
+            C_Type : Entity_Id;
+
+         begin
+            if Is_Private_Type (R) then
+               C_Type := Component_Type (Full_View (R));
+            else
+               C_Type := Component_Type (R);
+            end if;
+
+            C_Type := Root_Type (Underlying_Type (C_Type));
+
+            if C_Type = Standard_Character then
+               Lib_RE := RE_Put_Image_String;
+            elsif C_Type = Standard_Wide_Character then
+               Lib_RE := RE_Put_Image_Wide_String;
+            elsif C_Type = Standard_Wide_Wide_Character then
+               Lib_RE := RE_Put_Image_Wide_Wide_String;
+            else
+               raise Program_Error;
+            end if;
+         end;
       end if;
 
       --  Convert parameter to the required type (i.e. the type of the
@@ -485,9 +521,9 @@ package body Exp_Put_Image is
             Relocate_Node (Sink)));
    end Build_Protected_Put_Image_Call;
 
-   ------------------------------------
+   -------------------------------
    -- Build_Task_Put_Image_Call --
-   ------------------------------------
+   -------------------------------
 
    --  For "Task_Type'Put_Image (S, Task_Object)", build:
    --
@@ -580,6 +616,18 @@ package body Exp_Put_Image is
       function Make_Component_Name (C : Entity_Id) return Node_Id;
       --  Create a call that prints "Comp_Name => "
 
+      function Null_Record_Default_Implementation_OK
+        (Null_Record_Type : Entity_Id) return Boolean
+      is
+        (if Has_Aspect (Null_Record_Type, Aspect_Put_Image)
+           then False
+         elsif not Is_Derived_Type
+                     (Implementation_Base_Type (Null_Record_Type))
+           then True
+         else Null_Record_Default_Implementation_OK
+                (Implementation_Base_Type (Etype (Null_Record_Type))));
+      --  return True iff ok to emit "(NULL RECORD)" for given null record type
+
       ------------------------------------
       -- Make_Component_List_Attributes --
       ------------------------------------
@@ -638,12 +686,14 @@ package body Exp_Put_Image is
          return Result;
       end Make_Component_List_Attributes;
 
-      --------------------------------
+      ---------------------------
       -- Append_Component_Attr --
-      --------------------------------
+      ---------------------------
 
       procedure Append_Component_Attr (Clist : List_Id; C : Entity_Id) is
-         Component_Typ : constant Entity_Id := Put_Image_Base_Type (Etype (C));
+         Component_Typ : constant Entity_Id :=
+           Put_Image_Base_Type
+             (Get_Corresponding_Mutably_Tagged_Type_If_Present (Etype (C)));
       begin
          if Ekind (C) /= E_Void then
             Append_To (Clist,
@@ -852,7 +902,10 @@ package body Exp_Put_Image is
                           Type_Name))));
             end;
          end if;
-      elsif Is_Null_Record_Type (Btyp, Ignore_Privacy => True) then
+
+      elsif Is_Null_Record_Type (Btyp, Ignore_Privacy => True)
+        and then Null_Record_Default_Implementation_OK (Btyp)
+      then
 
          --  Interface types take this path.
 
@@ -921,9 +974,9 @@ package body Exp_Put_Image is
       Build_Put_Image_Proc (Loc, Btyp, Decl, Pnam, Stms);
    end Build_Record_Put_Image_Procedure;
 
-   -------------------------------
+   -----------------------------
    -- Build_Put_Image_Profile --
-   -------------------------------
+   -----------------------------
 
    function Build_Put_Image_Profile
      (Loc : Source_Ptr; Typ : Entity_Id) return List_Id
@@ -968,9 +1021,9 @@ package body Exp_Put_Image is
               Statements => Stms));
    end Build_Put_Image_Proc;
 
-   ------------------------------------
+   ----------------------------------
    -- Build_Unknown_Put_Image_Call --
-   ------------------------------------
+   ----------------------------------
 
    function Build_Unknown_Put_Image_Call (N : Node_Id) return Node_Id is
       Loc    : constant Source_Ptr := Sloc (N);
@@ -1324,8 +1377,19 @@ package body Exp_Put_Image is
    -- Preload_Root_Buffer_Type --
    ------------------------------
 
+   Preload_Root_Buffer_Type_Done : Boolean := False;
+   --  True if Preload_Root_Buffer_Type has already done its work;
+   --  no need to do it again in that case.
+
+   Debug_Unit_Walk : Boolean renames Debug_Flag_Dot_WW;
+
    procedure Preload_Root_Buffer_Type (Compilation_Unit : Node_Id) is
+      Ignore : Entity_Id;
    begin
+      if Preload_Root_Buffer_Type_Done then
+         return;
+      end if;
+
       --  We can't call RTE (RE_Root_Buffer_Type) for at least some
       --  predefined units, because it would introduce cyclic dependences.
       --  The package where Root_Buffer_Type is declared, for example, and
@@ -1342,19 +1406,26 @@ package body Exp_Put_Image is
       --  RTE (RE_Root_Buffer_Type) when compiling the compiler itself.
       --  Packages Ada.Strings.Buffer_Types and friends are not included
       --  in the compiler.
-      --
-      --  Don't do it if type Root_Buffer_Type is unavailable in the runtime.
 
       if not In_Predefined_Unit (Compilation_Unit)
         and then Tagged_Seen
         and then not No_Run_Time_Mode
-        and then RTE_Available (RE_Root_Buffer_Type)
       then
-         declare
-            Ignore : constant Entity_Id := RTE (RE_Root_Buffer_Type);
-         begin
-            null;
-         end;
+         Preload_Root_Buffer_Type_Done := True;
+
+         --  Don't do it if type Root_Buffer_Type is unavailable in the
+         --  runtime.
+
+         if RTE_Available (RE_Root_Buffer_Type) then
+            if Debug_Unit_Walk then
+               Write_Line ("Preload_Root_Buffer_Type: ");
+               Write_Unit_Info
+                 (Get_Cunit_Unit_Number (Compilation_Unit),
+                  Unit (Compilation_Unit));
+            end if;
+
+            Ignore := RTE (RE_Root_Buffer_Type);
+         end if;
       end if;
    end Preload_Root_Buffer_Type;
 

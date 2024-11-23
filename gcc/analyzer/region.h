@@ -176,13 +176,13 @@ public:
   void dump (bool simple) const;
   void dump () const;
 
-  json::value *to_json () const;
+  std::unique_ptr<json::value> to_json () const;
 
 
   bool maybe_print_for_user (pretty_printer *pp,
 			     const region_model &model) const;
 
-  std::unique_ptr<text_art::widget>
+  std::unique_ptr<text_art::tree_widget>
   make_dump_widget (const text_art::dump_widget_info &dwi,
 		    const char *prefix = nullptr) const;
 

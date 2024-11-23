@@ -82,23 +82,6 @@ extern gimple_ranger *enable_ranger (struct function *m,
 				     bool use_imm_uses = true);
 extern void disable_ranger (struct function *);
 
-class assume_query : public range_query
-{
-public:
-  assume_query ();
-  ~assume_query ();
-  bool assume_range_p (vrange &r, tree name);
-  virtual bool range_of_expr (vrange &r, tree expr, gimple * = NULL);
-  void dump (FILE *f);
-protected:
-  void calculate_stmt (gimple *s, vrange &lhs_range, fur_source &src);
-  void calculate_op (tree op, gimple *s, vrange &lhs, fur_source &src);
-  void calculate_phi (gphi *phi, vrange &lhs_range, fur_source &src);
-  void check_taken_edge (edge e, fur_source &src);
-
-  ssa_lazy_cache global;
-};
-
 // DOM based ranger for fast VRP.
 // This must be processed in DOM order, and does only basic range operations.
 
@@ -112,19 +95,16 @@ public:
   virtual bool range_on_edge (vrange &r, edge e, tree expr) override;
   virtual bool range_of_stmt (vrange &r, gimple *s, tree name = NULL) override;
 
-  bool edge_range (vrange &r, edge e, tree name);
-  void range_in_bb (vrange &r, basic_block bb, tree name);
 
   void pre_bb (basic_block bb);
   void post_bb (basic_block bb);
 protected:
+  bitmap_obstack m_bitmaps;
+  void range_in_bb (vrange &r, basic_block bb, tree name);
   DISABLE_COPY_AND_ASSIGN (dom_ranger);
-  void maybe_push_edge (edge e, bool edge_0);
   ssa_cache m_global;
   vec<ssa_lazy_cache *> m_freelist;
-  vec<ssa_lazy_cache *> m_e0;
-  vec<ssa_lazy_cache *> m_e1;
-  bitmap m_pop_list;
+  vec<ssa_lazy_cache *> m_bb;
   range_tracer tracer;
 };
 #endif // GCC_GIMPLE_RANGE_H

@@ -193,7 +193,7 @@ compute_local_program_points (
       /* Collect the stmts that is vectorized and mark their program point.  */
       for (i = 0; i < nbbs; i++)
 	{
-	  int point = 1;
+	  unsigned int point = 1;
 	  basic_block bb = bbs[i];
 	  vec<stmt_point> program_points = vNULL;
 	  if (dump_enabled_p ())
@@ -488,9 +488,15 @@ max_number_of_live_regs (loop_vec_info loop_vinfo, const basic_block bb,
       pair live_range = (*iter).second;
       for (i = live_range.first + 1; i <= live_range.second; i++)
 	{
-	  machine_mode mode = TREE_CODE (TREE_TYPE (var)) == BOOLEAN_TYPE
-				? BImode
-				: TYPE_MODE (TREE_TYPE (var));
+	  machine_mode mode;
+	  if (TREE_CODE (TREE_TYPE (var)) == BOOLEAN_TYPE)
+	    mode = BImode;
+	  /* Constants do not have a mode, just use the biggest so
+	     compute_nregs will return 1.  */
+	  else if (TREE_CODE (var) == INTEGER_CST)
+	    mode = biggest_mode;
+	  else
+	    mode = TYPE_MODE (TREE_TYPE (var));
 	  unsigned int nregs
 	    = compute_nregs_for_mode (loop_vinfo, mode, biggest_mode, lmul);
 	  live_vars_vec[i] += nregs;
@@ -563,7 +569,7 @@ get_store_value (gimple *stmt)
     return gimple_assign_rhs1 (stmt);
 }
 
-/* Return true if addtional vector vars needed.  */
+/* Return true if additional vector vars needed.  */
 static bool
 need_additional_vector_vars_p (stmt_vec_info stmt_info)
 {
@@ -755,7 +761,7 @@ update_local_live_ranges (
 		 convert it into:
 
 		   1. MASK_LEN_GATHER_LOAD (..., perm indice).
-		   2. Continguous load/store + VEC_PERM (..., perm indice)
+		   2. Contiguous load/store + VEC_PERM (..., perm indice)
 
 		We will be likely using one more vector variable.  */
 	      unsigned int max_point
@@ -890,7 +896,7 @@ costs::analyze_loop_vinfo (loop_vec_info loop_vinfo)
   record_potential_unexpected_spills (loop_vinfo);
 }
 
-/* Analyze the vectorized program stataments and use dynamic LMUL
+/* Analyze the vectorized program statements and use dynamic LMUL
    heuristic to detect whether the loop has unexpected spills.  */
 void
 costs::record_potential_unexpected_spills (loop_vec_info loop_vinfo)
@@ -1240,7 +1246,7 @@ costs::add_stmt_cost (int count, vect_cost_for_stmt kind,
     {
       /* If we're applying the VLA vs. VLS unrolling heuristic,
 	 estimate the number of statements in the unrolled VLS
-	 loop.  For simplicitly, we assume that one iteration of the
+	 loop.  For simplicity, we assume that one iteration of the
 	 VLS loop would need the same number of statements
 	 as one iteration of the VLA loop.  */
       if (where == vect_body && m_unrolled_vls_niters)

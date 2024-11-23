@@ -252,7 +252,7 @@ decode_caches_intel (unsigned reg, bool xeon_mp,
 /* Detect cache parameters using CPUID function 2.  */
 
 static void
-detect_caches_cpuid2 (bool xeon_mp, 
+detect_caches_cpuid2 (bool xeon_mp,
 		      struct cache_desc *level1, struct cache_desc *level2)
 {
   unsigned regs[4];
@@ -295,7 +295,7 @@ detect_caches_cpuid4 (struct cache_desc *level1, struct cache_desc *level2,
   int count;
 
   for (count = 0;; count++)
-    { 
+    {
       __cpuid_count(4, count, eax, ebx, ecx, edx);
       switch (eax & 0x1f)
 	{
@@ -558,10 +558,12 @@ const char *host_detect_local_cpu (int argc, const char **argv)
       switch (family)
 	{
 	case 7:
-	  if (model == 0x3b)
-	    processor = PROCESSOR_LUJIAZUI;
-	  else if (model >= 0x5b)
+	  if (model >= 0x6b)
+	    processor = PROCESSOR_SHIJIDADAO;
+	  else if (model == 0x5b)
 	    processor = PROCESSOR_YONGFENG;
+	  else if (model == 0x3b)
+	    processor = PROCESSOR_LUJIAZUI;
 	  break;
 	default:
 	  break;
@@ -578,6 +580,7 @@ const char *host_detect_local_cpu (int argc, const char **argv)
 	  processor = PROCESSOR_PENTIUM;
 	  break;
 	case 6:
+	case 19:
 	  processor = PROCESSOR_PENTIUMPRO;
 	  break;
 	case 15:
@@ -620,11 +623,14 @@ const char *host_detect_local_cpu (int argc, const char **argv)
 	{
 	  if (arch)
 	    {
-	      /* This is unknown family 0x6 CPU.  */
+	      /* This is unknown CPU.  */
 	      if (has_feature (FEATURE_AVX512F))
 		{
+		  /* Assume Diamond Rapids.  */
+		  if (has_feature (FEATURE_AVX10_2_512))
+		    cpu = "diamondrapids";
 		  /* Assume Granite Rapids D.  */
-		  if (has_feature (FEATURE_AMX_COMPLEX))
+		  else if (has_feature (FEATURE_AMX_COMPLEX))
 		    cpu = "graniterapids-d";
 		  /* Assume Granite Rapids.  */
 		  else if (has_feature (FEATURE_AMX_FP16))
@@ -686,7 +692,7 @@ const char *host_detect_local_cpu (int argc, const char **argv)
 		    cpu = "haswell";
 		  /* Assume Sandy Bridge.  */
 		  else
-		    cpu = "sandybridge";	      
+		    cpu = "sandybridge";
 	      }
 	      else if (has_feature (FEATURE_SSE4_2))
 		{
@@ -853,6 +859,9 @@ const char *host_detect_local_cpu (int argc, const char **argv)
     case PROCESSOR_YONGFENG:
       cpu = "yongfeng";
       break;
+    case PROCESSOR_SHIJIDADAO:
+      cpu = "shijidadao";
+      break;
 
     default:
       /* Use something reasonable.  */
@@ -895,7 +904,8 @@ const char *host_detect_local_cpu (int argc, const char **argv)
 	    if (has_feature (isa_names_table[i].feature))
 	      {
 		if (codegen_x86_64
-		    || isa_names_table[i].feature != FEATURE_UINTR)
+		    || (isa_names_table[i].feature != FEATURE_UINTR
+			&& isa_names_table[i].feature != FEATURE_APX_F))
 		  options = concat (options, " ",
 				    isa_names_table[i].option, NULL);
 	      }

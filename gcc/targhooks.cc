@@ -298,6 +298,18 @@ default_mode_for_suffix (char suffix ATTRIBUTE_UNUSED)
   return VOIDmode;
 }
 
+/* Return machine mode for a floating type which is indicated
+   by the given enum tree_index.  */
+
+machine_mode
+default_mode_for_floating_type (enum tree_index ti)
+{
+  if (ti == TI_FLOAT_TYPE)
+    return SFmode;
+  gcc_assert (ti == TI_DOUBLE_TYPE || ti == TI_LONG_DOUBLE_TYPE);
+  return DFmode;
+}
+
 /* The generic C++ ABI specifies this is a 64-bit value.  */
 tree
 default_cxx_guard_type (void)
@@ -449,11 +461,11 @@ default_scalar_mode_supported_p (scalar_mode mode)
       return false;
 
     case MODE_FLOAT:
-      if (precision == FLOAT_TYPE_SIZE)
+      if (mode == targetm.c.mode_for_floating_type (TI_FLOAT_TYPE))
 	return true;
-      if (precision == DOUBLE_TYPE_SIZE)
+      if (mode == targetm.c.mode_for_floating_type (TI_DOUBLE_TYPE))
 	return true;
-      if (precision == LONG_DOUBLE_TYPE_SIZE)
+      if (mode == targetm.c.mode_for_floating_type (TI_LONG_DOUBLE_TYPE))
 	return true;
       return false;
 
@@ -1597,6 +1609,14 @@ default_get_mask_mode (machine_mode mode)
 /* By default consider masked stores to be expensive.  */
 
 bool
+default_conditional_operation_is_expensive (unsigned ifn)
+{
+  return ifn == IFN_MASK_STORE;
+}
+
+/* By default consider masked stores to be expensive.  */
+
+bool
 default_empty_mask_is_expensive (unsigned ifn)
 {
   return ifn == IFN_MASK_STORE;
@@ -1749,7 +1769,7 @@ void
 default_addr_space_diagnose_usage (addr_space_t, location_t)
 {
 }
-	 
+
 
 /* The default hook for TARGET_ADDR_SPACE_CONVERT. This hook should never be
    called for targets with only a generic address space.  */
@@ -2212,7 +2232,7 @@ reg_class_t
 default_preferred_reload_class (rtx x ATTRIBUTE_UNUSED,
 			        reg_class_t rclass)
 {
-#ifdef PREFERRED_RELOAD_CLASS 
+#ifdef PREFERRED_RELOAD_CLASS
   return (reg_class_t) PREFERRED_RELOAD_CLASS (x, (enum reg_class) rclass);
 #else
   return rclass;

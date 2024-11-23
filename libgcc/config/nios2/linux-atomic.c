@@ -160,7 +160,7 @@ int HIDDEN
 __sync_val_compare_and_swap_4 (int *ptr, int oldval, int newval)
 {
   int actual_oldval, fail;
-    
+
   while (1)
     {
       actual_oldval = *ptr;
@@ -169,7 +169,7 @@ __sync_val_compare_and_swap_4 (int *ptr, int oldval, int newval)
 	return actual_oldval;
 
       fail = __kernel_cmpxchg (actual_oldval, newval, ptr);
-  
+
       if (!fail)
 	return oldval;
     }
@@ -206,8 +206,6 @@ __sync_val_compare_and_swap_4 (int *ptr, int oldval, int newval)
 
 SUBWORD_VAL_CAS (unsigned short, 2)
 SUBWORD_VAL_CAS (unsigned char,  1)
-
-typedef unsigned char bool;
 
 bool HIDDEN
 __sync_bool_compare_and_swap_4 (int *ptr, int oldval, int newval)

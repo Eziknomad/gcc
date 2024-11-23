@@ -261,6 +261,12 @@ noseglinkedit
 Driver RejectNegative Negative(seglinkedit)
 (Obsolete) This is the default.
 
+ObjC
+Driver RejectNegative
+
+ObjC++
+Driver RejectNegative
+
 object
 Driver RejectNegative
 
@@ -380,6 +386,10 @@ Driver RejectNegative Separate
 unexported_symbols_list
 Driver RejectNegative Separate
 -unexported_symbols_list <filename>	Do not export the global symbols listed in <filename>.
+
+weak_framework
+Driver RejectNegative Separate
+-weak_framework <framework>	Make a weak link to the specified framework.
 
 weak_reference_mismatches
 Driver RejectNegative Separate

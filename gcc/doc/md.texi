@@ -3910,9 +3910,6 @@ instruction sequence
 @item T
 Memory address aligned to an 8-byte boundary
 
-@item U
-Even register
-
 @item W
 Memory address for @samp{e} constraint registers
 
@@ -5017,8 +5014,10 @@ This pattern is not allowed to @code{FAIL}.
 @item @samp{vec_mask_load_lanes@var{m}@var{n}}
 Like @samp{vec_load_lanes@var{m}@var{n}}, but takes an additional
 mask operand (operand 2) that specifies which elements of the destination
-vectors should be loaded.  Other elements of the destination
-vectors are set to zero.  The operation is equivalent to:
+vectors should be loaded.  Other elements of the destination vectors are
+taken from operand 3, which is an else operand similar to the one in
+@code{maskload}.
+The operation is equivalent to:
 
 @smallexample
 int c = GET_MODE_SIZE (@var{m}) / GET_MODE_SIZE (@var{n});
@@ -5028,7 +5027,7 @@ for (j = 0; j < GET_MODE_NUNITS (@var{n}); j++)
       operand0[i][j] = operand1[j * c + i];
   else
     for (i = 0; i < c; i++)
-      operand0[i][j] = 0;
+      operand0[i][j] = operand3[j];
 @end smallexample
 
 This pattern is not allowed to @code{FAIL}.
@@ -5036,16 +5035,20 @@ This pattern is not allowed to @code{FAIL}.
 @cindex @code{vec_mask_len_load_lanes@var{m}@var{n}} instruction pattern
 @item @samp{vec_mask_len_load_lanes@var{m}@var{n}}
 Like @samp{vec_load_lanes@var{m}@var{n}}, but takes an additional
-mask operand (operand 2), length operand (operand 3) as well as bias operand (operand 4)
-that specifies which elements of the destination vectors should be loaded.
-Other elements of the destination vectors are undefined.  The operation is equivalent to:
+mask operand (operand 2), length operand (operand 4) as well as bias operand
+(operand 5) that specifies which elements of the destination vectors should be
+loaded.  Other elements of the destination vectors are taken from operand 3,
+which is an else operand similar to the one in @code{maskload}.
+The operation is equivalent to:
 
 @smallexample
 int c = GET_MODE_SIZE (@var{m}) / GET_MODE_SIZE (@var{n});
-for (j = 0; j < operand3 + operand4; j++)
-  if (operand2[j])
-    for (i = 0; i < c; i++)
+for (j = 0; j < operand4 + operand5; j++)
+  for (i = 0; i < c; i++)
+    if (operand2[j])
       operand0[i][j] = operand1[j * c + i];
+    else
+      operand0[i][j] = operand3[j];
 @end smallexample
 
 This pattern is not allowed to @code{FAIL}.
@@ -5125,18 +5128,39 @@ address width.
 @cindex @code{mask_gather_load@var{m}@var{n}} instruction pattern
 @item @samp{mask_gather_load@var{m}@var{n}}
 Like @samp{gather_load@var{m}@var{n}}, but takes an extra mask operand as
-operand 5.  Bit @var{i} of the mask is set if element @var{i}
+operand 5.
+Other elements of the destination vectors are taken from operand 6,
+which is an else operand similar to the one in @code{maskload}.
+Bit @var{i} of the mask is set if element @var{i}
 of the result should be loaded from memory and clear if element @var{i}
-of the result should be set to zero.
+of the result should be set to operand 6.
 
 @cindex @code{mask_len_gather_load@var{m}@var{n}} instruction pattern
 @item @samp{mask_len_gather_load@var{m}@var{n}}
-Like @samp{gather_load@var{m}@var{n}}, but takes an extra mask operand (operand 5),
-a len operand (operand 6) as well as a bias operand (operand 7).  Similar to mask_len_load,
-the instruction loads at most (operand 6 + operand 7) elements from memory.
+Like @samp{gather_load@var{m}@var{n}}, but takes an extra mask operand
+(operand 5) and an else operand (operand 6) as well as a len operand
+(operand 7) and a bias operand (operand 8).
+
+Similar to mask_len_load the instruction loads at
+most (operand 7 + operand 8) elements from memory.
 Bit @var{i} of the mask is set if element @var{i} of the result should
-be loaded from memory and clear if element @var{i} of the result should be undefined.
-Mask elements @var{i} with @var{i} > (operand 6 + operand 7) are ignored.
+be loaded from memory and clear if element @var{i} of the result should
+be set to element @var{i} of operand 6.
+Mask elements @var{i} with @var{i} > (operand 7 + operand 8) are ignored.
+
+@cindex @code{mask_len_strided_load@var{m}} instruction pattern
+@item @samp{mask_len_strided_load@var{m}}
+Load several separate memory locations into a destination vector of mode @var{m}.
+Operand 0 is a destination vector of mode @var{m}.
+Operand 1 is a scalar base address and operand 2 is a scalar stride of Pmode.
+operand 3 is mask operand, operand 4 is length operand and operand 5 is bias operand.
+The instruction can be seen as a special case of @code{mask_len_gather_load@var{m}@var{n}}
+with an offset vector that is a @code{vec_series} with zero as base and operand 2 as step.
+For each element the load address is operand 1 + @var{i} * operand 2.
+Similar to mask_len_load, the instruction loads at most (operand 4 + operand 5) elements from memory.
+Element @var{i} of the mask (operand 3) is set if element @var{i} of the result should
+be loaded from memory and clear if element @var{i} of the result should be zero.
+Mask elements @var{i} with @var{i} > (operand 4 + operand 5) are ignored.
 
 @cindex @code{scatter_store@var{m}@var{n}} instruction pattern
 @item @samp{scatter_store@var{m}@var{n}}
@@ -5174,6 +5198,19 @@ a len operand (operand 6) as well as a bias operand (operand 7).  The instructio
 at most (operand 6 + operand 7) elements of (operand 4) to memory.
 Bit @var{i} of the mask is set if element @var{i} of (operand 4) should be stored.
 Mask elements @var{i} with @var{i} > (operand 6 + operand 7) are ignored.
+
+@cindex @code{mask_len_strided_store@var{m}} instruction pattern
+@item @samp{mask_len_strided_store@var{m}}
+Store a vector of mode m into several distinct memory locations.
+Operand 0 is a scalar base address and operand 1 is scalar stride of Pmode.
+Operand 2 is the vector of values that should be stored, which is of mode @var{m}.
+operand 3 is mask operand, operand 4 is length operand and operand 5 is bias operand.
+The instruction can be seen as a special case of @code{mask_len_scatter_store@var{m}@var{n}}
+with an offset vector that is a @code{vec_series} with zero as base and operand 1 as step.
+For each element the store address is operand 0 + @var{i} * operand 1.
+Similar to mask_len_store, the instruction stores at most (operand 4 + operand 5) elements of
+mask (operand 3) to memory.  Element @var{i} of the mask is set if element @var{i} of (operand 3)
+should be stored.  Mask elements @var{i} with @var{i} > (operand 4 + operand 5) are ignored.
 
 @cindex @code{vec_set@var{m}} instruction pattern
 @item @samp{vec_set@var{m}}
@@ -5368,8 +5405,13 @@ Operands 4 and 5 have a target-dependent scalar integer mode.
 @cindex @code{maskload@var{m}@var{n}} instruction pattern
 @item @samp{maskload@var{m}@var{n}}
 Perform a masked load of vector from memory operand 1 of mode @var{m}
-into register operand 0.  Mask is provided in register operand 2 of
-mode @var{n}.
+into register operand 0.  The mask is provided in register operand 2 of
+mode @var{n}.  Operand 3 (the ``else value'') is of mode @var{m} and
+specifies which value is loaded when the mask is unset.
+The predicate of operand 3 must only accept the else values that the target
+actually supports.  Currently three values are attempted, zero, -1, and
+undefined.  GCC handles an else value of zero more efficiently than -1 or
+undefined.
 
 This pattern is not allowed to @code{FAIL}.
 
@@ -5435,15 +5477,16 @@ Operands 0 and 1 have mode @var{m}, which must be a vector mode.  Operand 3
 has whichever integer mode the target prefers.  A mask is specified in
 operand 2 which must be of type @var{n}.  The mask has lower precedence than
 the length and is itself subject to length masking,
-i.e. only mask indices < (operand 3 + operand 4) are used.
+i.e. only mask indices < (operand 4 + operand 5) are used.
+Operand 3 is an else operand similar to the one in @code{maskload}.
 Operand 4 conceptually has mode @code{QI}.
 
-Operand 2 can be a variable or a constant amount.  Operand 4 specifies a
+Operand 4 can be a variable or a constant amount.  Operand 5 specifies a
 constant bias: it is either a constant 0 or a constant -1.  The predicate on
-operand 4 must only accept the bias values that the target actually supports.
+operand 5 must only accept the bias values that the target actually supports.
 GCC handles a bias of 0 more efficiently than a bias of -1.
 
-If (operand 2 + operand 4) exceeds the number of elements in mode
+If (operand 4 + operand 5) exceeds the number of elements in mode
 @var{m}, the behavior is undefined.
 
 If the target prefers the length to be measured in bytes
@@ -5542,6 +5585,28 @@ means of constraints requiring operands 1 and 0 to be the same location.
 @itemx @samp{umin@var{m}3}, @samp{umax@var{m}3}
 @itemx @samp{and@var{m}3}, @samp{ior@var{m}3}, @samp{xor@var{m}3}
 Similar, for other arithmetic operations.
+
+@cindex @code{ustrunc@var{m}@var{n}2} instruction pattern
+@item @samp{ustrunc@var{m}@var{n}2}
+Truncate the operand 1, and storing the result in operand 0.  There will
+be saturation during the trunction.  The result will be saturated to the
+maximal value of operand 0 type if there is overflow when truncation.  The
+operand 1 must have mode @var{n},  and the operand 0 must have mode @var{m}.
+Both scalar and vector integer modes are allowed.
+
+@cindex @code{sstrunc@var{m}@var{n}2} instruction pattern
+@item @samp{sstrunc@var{m}@var{n}2}
+Similar but for signed.
+
+@cindex @code{andn@var{m}3} instruction pattern
+@item @samp{andn@var{m}3}
+Like @code{and@var{m}3}, but it uses bitwise-complement of operand 2
+rather than operand 2 itself.
+
+@cindex @code{iorn@var{m}3} instruction pattern
+@item @samp{iorn@var{m}3}
+Like @code{ior@var{m}3}, but it uses bitwise-complement of operand 2
+rather than operand 2 itself.
 
 @cindex @code{addv@var{m}4} instruction pattern
 @item @samp{addv@var{m}4}
@@ -5738,15 +5803,14 @@ for (i = 0; i < LEN + BIAS; i++)
     operand0 += operand2[i];
 @end smallexample
 
-@cindex @code{sdot_prod@var{m}} instruction pattern
-@item @samp{sdot_prod@var{m}}
+@cindex @code{sdot_prod@var{m}@var{n}} instruction pattern
+@item @samp{sdot_prod@var{m}@var{n}}
 
-Compute the sum of the products of two signed elements.
-Operand 1 and operand 2 are of the same mode. Their
-product, which is of a wider mode, is computed and added to operand 3.
-Operand 3 is of a mode equal or wider than the mode of the product. The
-result is placed in operand 0, which is of the same mode as operand 3.
-@var{m} is the mode of operand 1 and operand 2.
+Multiply operand 1 by operand 2 without loss of precision, given that
+both operands contain signed elements.  Add each product to the overlapping
+element of operand 3 and store the result in operand 0.  Operands 0 and 3
+have mode @var{m} and operands 1 and 2 have mode @var{n}, with @var{n}
+having narrower elements than @var{m}.
 
 Semantically the expressions perform the multiplication in the following signs
 
@@ -5756,15 +5820,14 @@ sdot<signed op0, signed op1, signed op2, signed op3> ==
 @dots{}
 @end smallexample
 
-@cindex @code{udot_prod@var{m}} instruction pattern
-@item @samp{udot_prod@var{m}}
+@cindex @code{udot_prod@var{m}@var{n}} instruction pattern
+@item @samp{udot_prod@var{m}@var{n}}
 
-Compute the sum of the products of two unsigned elements.
-Operand 1 and operand 2 are of the same mode. Their
-product, which is of a wider mode, is computed and added to operand 3.
-Operand 3 is of a mode equal or wider than the mode of the product. The
-result is placed in operand 0, which is of the same mode as operand 3.
-@var{m} is the mode of operand 1 and operand 2.
+Multiply operand 1 by operand 2 without loss of precision, given that
+both operands contain unsigned elements.  Add each product to the overlapping
+element of operand 3 and store the result in operand 0.  Operands 0 and 3
+have mode @var{m} and operands 1 and 2 have mode @var{n}, with @var{n}
+having narrower elements than @var{m}.
 
 Semantically the expressions perform the multiplication in the following signs
 
@@ -5774,14 +5837,14 @@ udot<unsigned op0, unsigned op1, unsigned op2, unsigned op3> ==
 @dots{}
 @end smallexample
 
-@cindex @code{usdot_prod@var{m}} instruction pattern
-@item @samp{usdot_prod@var{m}}
+@cindex @code{usdot_prod@var{m}@var{n}} instruction pattern
+@item @samp{usdot_prod@var{m}@var{n}}
 Compute the sum of the products of elements of different signs.
-Operand 1 must be unsigned and operand 2 signed. Their
-product, which is of a wider mode, is computed and added to operand 3.
-Operand 3 is of a mode equal or wider than the mode of the product. The
-result is placed in operand 0, which is of the same mode as operand 3.
-@var{m} is the mode of operand 1 and operand 2.
+Multiply operand 1 by operand 2 without loss of precision, given that operand 1
+is unsigned and operand 2 is signed.  Add each product to the overlapping
+element of operand 3 and store the result in operand 0.  Operands 0 and 3 have
+mode @var{m} and operands 1 and 2 have mode @var{n}, with @var{n} having
+narrower elements than @var{m}.
 
 Semantically the expressions perform the multiplication in the following signs
 
@@ -8548,14 +8611,33 @@ inclusive and operand 1 exclusive.
 If this pattern is not defined, a call to the library function
 @code{__clear_cache} is used.
 
-@cindex @code{spaceship@var{m}3} instruction pattern
-@item @samp{spaceship@var{m}3}
+@cindex @code{spaceship@var{m}4} instruction pattern
+@item @samp{spaceship@var{m}4}
 Initialize output operand 0 with mode of integer type to -1, 0, 1 or 2
 if operand 1 with mode @var{m} compares less than operand 2, equal to
 operand 2, greater than operand 2 or is unordered with operand 2.
+Operand 3 should be @code{const0_rtx} if the result is used in comparisons,
+@code{const1_rtx} if the result is used as integer value and the comparison
+is integral unsigned, @code{constm1_rtx} if the result is used as integer
+value and the comparison is integral signed and some other @code{CONST_INT}
+if the result is used as integer value and the comparison is floating point.
+In the last case, instead of setting output operand 0 to 2 for unordered,
+set it to operand 3.
 @var{m} should be a scalar floating point mode.
 
 This pattern is not allowed to @code{FAIL}.
+
+@cindex @code{isfinite@var{m}2} instruction pattern
+@item @samp{isfinite@var{m}2}
+Return 1 if operand 1 is a finite floating point number and 0
+otherwise.  @var{m} is a scalar floating point mode.  Operand 0
+has mode @code{SImode}, and operand 1 has mode @var{m}.
+
+@cindex @code{isnormal@var{m}2} instruction pattern
+@item @samp{isnormal@var{m}2}
+Return 1 if operand 1 is a normal floating point number and 0
+otherwise.  @var{m} is a scalar floating point mode.  Operand 0
+has mode @code{SImode}, and operand 1 has mode @var{m}.
 
 @end table
 
@@ -12042,6 +12124,11 @@ The signed version of the instruction uses @code{smax} and @code{smin}
 while the unsigned version uses @code{umax} and @code{umin}.  There
 are no versions that pair @code{smax} with @code{umin} or @code{umax}
 with @code{smin}.
+
+It is also possible to use other types of attributes as codes,
+in a similar way.  For example, an int iterator could be used to
+iterate over @code{unspec} numbers, with an int attribute specifying
+an associated rtx code.  @xref{Int Iterators}.
 
 Here's an example of code iterators in action, taken from the MIPS port:
 

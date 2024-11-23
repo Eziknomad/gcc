@@ -19,7 +19,6 @@ along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
 #include "config.h"
-#define INCLUDE_MEMORY
 #define INCLUDE_ALGORITHM
 #define INCLUDE_VECTOR
 #include "system.h"
@@ -223,23 +222,19 @@ region_to_value_map::dump_to_pp (pretty_printer *pp, bool simple,
 DEBUG_FUNCTION void
 region_to_value_map::dump (bool simple) const
 {
-  pretty_printer pp;
-  pp_format_decoder (&pp) = default_tree_printer;
-  pp_show_color (&pp) = pp_show_color (global_dc->printer);
-  pp.set_output_stream (stderr);
+  tree_dump_pretty_printer pp (stderr);
   dump_to_pp (&pp, simple, true);
   pp_newline (&pp);
-  pp_flush (&pp);
 }
 
 /* Generate a JSON value for this region_to_value_map.
    This is intended for debugging the analyzer rather than
    serialization.  */
 
-json::object *
+std::unique_ptr<json::object>
 region_to_value_map::to_json () const
 {
-  json::object *map_obj = new json::object ();
+  auto map_obj = ::make_unique<json::object> ();
 
   auto_vec<const region *> regs;
   for (iterator iter = begin (); iter != end (); ++iter)
@@ -258,7 +253,7 @@ region_to_value_map::to_json () const
   return map_obj;
 }
 
-std::unique_ptr<text_art::widget>
+std::unique_ptr<text_art::tree_widget>
 region_to_value_map::
 make_dump_widget (const text_art::dump_widget_info &dwi) const
 {
@@ -288,7 +283,7 @@ make_dump_widget (const text_art::dump_widget_info &dwi) const
       sval->dump_to_pp (pp, true);
       w->add_child (text_art::tree_widget::make (dwi, pp));
     }
-  return std::move (w);
+  return w;
 }
 
 /* Attempt to merge THIS with OTHER, writing the result
@@ -483,13 +478,9 @@ region_model::dump_to_pp (pretty_printer *pp, bool simple,
 void
 region_model::dump (FILE *fp, bool simple, bool multiline) const
 {
-  pretty_printer pp;
-  pp_format_decoder (&pp) = default_tree_printer;
-  pp_show_color (&pp) = pp_show_color (global_dc->printer);
-  pp.set_output_stream (fp);
+  tree_dump_pretty_printer pp (fp);
   dump_to_pp (&pp, simple, multiline);
   pp_newline (&pp);
-  pp_flush (&pp);
 }
 
 /* Dump a multiline representation of this model to stderr.  */
@@ -520,10 +511,10 @@ region_model::debug () const
    This is intended for debugging the analyzer rather than
    serialization.  */
 
-json::object *
+std::unique_ptr<json::object>
 region_model::to_json () const
 {
-  json::object *model_obj = new json::object ();
+  auto model_obj = ::make_unique<json::object> ();
   model_obj->set ("store", m_store.to_json ());
   model_obj->set ("constraints", m_constraints->to_json ());
   if (m_current_frame)
@@ -532,7 +523,7 @@ region_model::to_json () const
   return model_obj;
 }
 
-std::unique_ptr<text_art::widget>
+std::unique_ptr<text_art::tree_widget>
 region_model::make_dump_widget (const text_art::dump_widget_info &dwi) const
 {
   using text_art::tree_widget;
@@ -556,7 +547,7 @@ region_model::make_dump_widget (const text_art::dump_widget_info &dwi) const
 			       m_mgr->get_store_manager ()));
   model_widget->add_child (m_constraints->make_dump_widget (dwi));
   model_widget->add_child (m_dynamic_extents.make_dump_widget (dwi));
-  return std::move (model_widget);
+  return model_widget;
 }
 
 /* Assert that this object is valid.  */
@@ -680,25 +671,42 @@ public:
       }
   }
 
-  label_text describe_final_event (const evdesc::final_event &ev) final override
+  bool
+  describe_final_event (pretty_printer &pp,
+			const evdesc::final_event &) final override
   {
     switch (m_pkind)
       {
       default:
 	gcc_unreachable ();
       case POISON_KIND_UNINIT:
-	return ev.formatted_print ("use of uninitialized value %qE here",
-				   m_expr);
+	{
+	  pp_printf (&pp,
+		     "use of uninitialized value %qE here",
+		     m_expr);
+	  return true;
+	}
       case POISON_KIND_FREED:
-	return ev.formatted_print ("use after %<free%> of %qE here",
-				   m_expr);
+	{
+	  pp_printf (&pp,
+		     "use after %<free%> of %qE here",
+		     m_expr);
+	  return true;
+	}
       case POISON_KIND_DELETED:
-	return ev.formatted_print ("use after %<delete%> of %qE here",
-				   m_expr);
+	{
+	  pp_printf (&pp,
+		     "use after %<delete%> of %qE here",
+		     m_expr);
+	  return true;
+	}
       case POISON_KIND_POPPED_STACK:
-	return ev.formatted_print
-	  ("dereferencing pointer %qE to within stale stack frame",
-	   m_expr);
+	{
+	  pp_printf (&pp,
+		     "dereferencing pointer %qE to within stale stack frame",
+		     m_expr);
+	  return true;
+	}
       }
   }
 
@@ -783,9 +791,14 @@ public:
     return ctxt.warn ("shift by negative count (%qE)", m_count_cst);
   }
 
-  label_text describe_final_event (const evdesc::final_event &ev) final override
+  bool
+  describe_final_event (pretty_printer &pp,
+			const evdesc::final_event &) final override
   {
-    return ev.formatted_print ("shift by negative amount here (%qE)", m_count_cst);
+    pp_printf (&pp,
+	       "shift by negative amount here (%qE)",
+	       m_count_cst);
+    return true;
   }
 
 private:
@@ -830,9 +843,14 @@ public:
 		      m_count_cst, m_operand_precision);
   }
 
-  label_text describe_final_event (const evdesc::final_event &ev) final override
+  bool
+  describe_final_event (pretty_printer &pp,
+			const evdesc::final_event &) final override
   {
-    return ev.formatted_print ("shift by count %qE here", m_count_cst);
+    pp_printf (&pp,
+	       "shift by count %qE here",
+	       m_count_cst);
+    return true;
   }
 
 private:
@@ -861,14 +879,16 @@ public:
     {
     }
 
-    label_text get_desc (bool) const
+    void print_desc (pretty_printer &pp) const final override
     {
       if (m_is_lhs)
-	return label_text::borrow ("underlying object for left-hand side"
-				   " of subtraction created here");
+	pp_string (&pp,
+		   "underlying object for left-hand side"
+		   " of subtraction created here");
       else
-	return label_text::borrow ("underlying object for right-hand side"
-				   " of subtraction created here");
+	pp_string (&pp,
+		   "underlying object for right-hand side"
+		   " of subtraction created here");
     }
 
   private:
@@ -928,11 +948,14 @@ public:
 	(make_unique<ptrdiff_region_creation_event> (loc_info, false));
   }
 
-  label_text describe_final_event (const evdesc::final_event &ev) final override
+  bool
+  describe_final_event (pretty_printer &pp,
+			const evdesc::final_event &) final override
   {
-    return ev.formatted_print
-      ("subtraction of pointers has undefined behavior if"
-       " they do not point into the same array object");
+    pp_string (&pp,
+	       "subtraction of pointers has undefined behavior if"
+	       " they do not point into the same array object");
+    return true;
   }
 
   void mark_interesting_stuff (interesting_t *interesting) final override
@@ -3128,16 +3151,30 @@ public:
     return warned;
   }
 
-  label_text describe_final_event (const evdesc::final_event &ev) final override
+  bool
+  describe_final_event (pretty_printer &pp,
+			const evdesc::final_event &) final override
   {
     switch (m_reg->get_kind ())
       {
       default:
-	return ev.formatted_print ("write to %<const%> object %qE here", m_decl);
+	{
+	  pp_printf (&pp,
+		     "write to %<const%> object %qE here", m_decl);
+	  return true;
+	}
       case RK_FUNCTION:
-	return ev.formatted_print ("write to function %qE here", m_decl);
+	{
+	  pp_printf (&pp,
+		     "write to function %qE here", m_decl);
+	  return true;
+	}
       case RK_LABEL:
-	return ev.formatted_print ("write to label %qE here", m_decl);
+	{
+	  pp_printf (&pp,
+		     "write to label %qE here", m_decl);
+	  return true;
+	}
       }
   }
 
@@ -3179,9 +3216,12 @@ public:
        but it is not available at this point.  */
   }
 
-  label_text describe_final_event (const evdesc::final_event &ev) final override
+  bool
+  describe_final_event (pretty_printer &pp,
+			const evdesc::final_event &) final override
   {
-    return ev.formatted_print ("write to string literal here");
+    pp_string (&pp, "write to string literal here");
+    return true;
   }
 
 private:
@@ -3382,35 +3422,50 @@ public:
 		      " of the pointee's size");
   }
 
-  label_text describe_final_event (const evdesc::final_event &ev) final
-  override
+  bool
+  describe_final_event (pretty_printer &pp,
+			const evdesc::final_event &) final override
   {
     tree pointee_type = TREE_TYPE (m_lhs->get_type ());
     if (m_has_allocation_event)
-      return ev.formatted_print ("assigned to %qT here;"
-				 " %<sizeof (%T)%> is %qE",
-				 m_lhs->get_type (), pointee_type,
-				 size_in_bytes (pointee_type));
+      {
+	pp_printf (&pp,
+		   "assigned to %qT here;"
+		   " %<sizeof (%T)%> is %qE",
+		   m_lhs->get_type (), pointee_type,
+		   size_in_bytes (pointee_type));
+	return true;
+      }
     /* Fallback: Typically, we should always see an allocation_event
        before.  */
     if (m_expr)
       {
 	if (TREE_CODE (m_expr) == INTEGER_CST)
-	  return ev.formatted_print ("allocated %E bytes and assigned to"
-				    " %qT here; %<sizeof (%T)%> is %qE",
-				    m_expr, m_lhs->get_type (), pointee_type,
-				    size_in_bytes (pointee_type));
+	  {
+	    pp_printf (&pp,
+		       "allocated %E bytes and assigned to"
+		       " %qT here; %<sizeof (%T)%> is %qE",
+		       m_expr, m_lhs->get_type (), pointee_type,
+		       size_in_bytes (pointee_type));
+	    return true;
+	  }
 	else
-	  return ev.formatted_print ("allocated %qE bytes and assigned to"
-				    " %qT here; %<sizeof (%T)%> is %qE",
-				    m_expr, m_lhs->get_type (), pointee_type,
-				    size_in_bytes (pointee_type));
+	  {
+	    pp_printf (&pp,
+		       "allocated %qE bytes and assigned to"
+		       " %qT here; %<sizeof (%T)%> is %qE",
+		       m_expr, m_lhs->get_type (), pointee_type,
+		       size_in_bytes (pointee_type));
+	    return true;
+	  }
       }
 
-    return ev.formatted_print ("allocated and assigned to %qT here;"
-			       " %<sizeof (%T)%> is %qE",
-			       m_lhs->get_type (), pointee_type,
-			       size_in_bytes (pointee_type));
+    pp_printf (&pp,
+	       "allocated and assigned to %qT here;"
+	       " %<sizeof (%T)%> is %qE",
+	       m_lhs->get_type (), pointee_type,
+	       size_in_bytes (pointee_type));
+    return true;
   }
 
   void
@@ -4498,21 +4553,21 @@ region_model::check_for_null_terminated_string_arg (const call_details &cd,
     {
     }
 
-    label_text get_desc (bool can_colorize) const final override
+    void print_desc (pretty_printer &pp) const final override
     {
       if (m_arg_details.m_arg_expr)
-	return make_label_text (can_colorize,
-				"while looking for null terminator"
-				" for argument %i (%qE) of %qD...",
-				m_arg_details.m_arg_idx + 1,
-				m_arg_details.m_arg_expr,
-				m_arg_details.m_called_fndecl);
+	pp_printf (&pp,
+		   "while looking for null terminator"
+		   " for argument %i (%qE) of %qD...",
+		   m_arg_details.m_arg_idx + 1,
+		   m_arg_details.m_arg_expr,
+		   m_arg_details.m_called_fndecl);
       else
-	return make_label_text (can_colorize,
-				"while looking for null terminator"
-				" for argument %i of %qD...",
-				m_arg_details.m_arg_idx + 1,
-				m_arg_details.m_called_fndecl);
+	pp_printf (&pp,
+		   "while looking for null terminator"
+		   " for argument %i of %qD...",
+		   m_arg_details.m_arg_idx + 1,
+		   m_arg_details.m_called_fndecl);
     }
 
   private:
@@ -5874,7 +5929,7 @@ region_model::update_for_return_gcall (const gcall *call_stmt,
   pop_frame (lhs, NULL, ctxt, call_stmt);
 }
 
-/* Extract calling information from the superedge and update the model for the 
+/* Extract calling information from the superedge and update the model for the
    call  */
 
 void
@@ -5885,7 +5940,7 @@ region_model::update_for_call_superedge (const call_superedge &call_edge,
   update_for_gcall (call_stmt, ctxt, call_edge.get_callee_function ());
 }
 
-/* Extract calling information from the return superedge and update the model 
+/* Extract calling information from the return superedge and update the model
    for the returning call */
 
 void
@@ -6678,14 +6733,19 @@ public:
     return warned;
   }
 
-  label_text describe_final_event (const evdesc::final_event &ev) final
-  override
+  bool
+  describe_final_event (pretty_printer &pp,
+			const evdesc::final_event &) final override
   {
     if (m_arg)
-      return ev.formatted_print ("operand %qE is of type %qT",
-				 m_arg, TREE_TYPE (m_arg));
-    return ev.formatted_print ("at least one operand of the size argument is"
-			       " of a floating-point type");
+      pp_printf (&pp,
+		 "operand %qE is of type %qT",
+		 m_arg, TREE_TYPE (m_arg));
+    else
+      pp_printf (&pp,
+		 "at least one operand of the size argument is"
+		 " of a floating-point type");
+    return true;
   }
 
 private:
@@ -6946,19 +7006,24 @@ public:
     return warned;
   }
 
-  label_text describe_final_event (const evdesc::final_event &) final override
+  bool
+  describe_final_event (pretty_printer &pp,
+			const evdesc::final_event &) final override
   {
     enum memory_space mem_space = get_src_memory_space ();
     switch (mem_space)
       {
       default:
-	return label_text::borrow ("uninitialized data copied here");
+	pp_string (&pp, "uninitialized data copied here");
+	return true;
 
       case MEMSPACE_STACK:
-	return label_text::borrow ("uninitialized data copied from stack here");
+	pp_string (&pp, "uninitialized data copied from stack here");
+	return true;
 
       case MEMSPACE_HEAP:
-	return label_text::borrow ("uninitialized data copied from heap here");
+	pp_string (&pp, "uninitialized data copied from heap here");
+	return true;
       }
   }
 
@@ -7397,12 +7462,8 @@ model_merger::dump_to_pp (pretty_printer *pp, bool simple) const
 void
 model_merger::dump (FILE *fp, bool simple) const
 {
-  pretty_printer pp;
-  pp_format_decoder (&pp) = default_tree_printer;
-  pp_show_color (&pp) = pp_show_color (global_dc->printer);
-  pp.set_output_stream (fp);
+  tree_dump_pretty_printer pp (fp);
   dump_to_pp (&pp, simple);
-  pp_flush (&pp);
 }
 
 /* Dump a multiline representation of this merger to stderr.  */

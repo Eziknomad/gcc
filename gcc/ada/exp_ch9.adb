@@ -489,7 +489,8 @@ package body Exp_Ch9 is
    --    <actualN> := P.<formalN>;
 
    procedure Reset_Scopes_To (Bod : Node_Id; E : Entity_Id);
-   --  Reset the scope of declarations and blocks at the top level of Bod to
+   --  Reset the scope of declarations and blocks at the top level of Bod and
+   --  of nested object declarations with scope pointing to the entry entity to
    --  be E. Bod is either a block or a subprogram body. Used after expanding
    --  various kinds of entry bodies into their corresponding constructs. This
    --  is needed during unnesting to determine whether a body generated for an
@@ -1344,6 +1345,9 @@ package body Exp_Ch9 is
       Rec_Ent  : constant Entity_Id :=
                    Make_Defining_Identifier
                      (Loc, New_External_Name (Chars (Ctyp), 'V'));
+      Alist    : List_Id;
+      Asp_Copy : Node_Id;
+      Aspect   : Node_Id;
       Disc     : Entity_Id;
       Dlist    : List_Id;
       New_Disc : Entity_Id;
@@ -1394,6 +1398,37 @@ package body Exp_Ch9 is
          Dlist := No_List;
       end if;
 
+      --  Propagate the aspect First_Controlling_Parameter to the corresponding
+      --  record to reuse the tagged types machinery. This is not needed if
+      --  the concurrent type does not implement interface types, as the
+      --  corresponding record will not be a tagged type in such case.
+
+      Alist := No_List;
+
+      if Present (Parent (Ctyp))
+        and then Present (Interface_List (Parent (Ctyp)))
+        and then Present (Aspect_Specifications (N))
+      then
+         Aspect := First (Aspect_Specifications (N));
+         while Present (Aspect) loop
+            if Chars (Identifier (Aspect))
+              = Name_First_Controlling_Parameter
+            then
+               Alist    := New_List;
+               Asp_Copy := New_Copy_Tree (Aspect);
+
+               --  Force its analysis in the corresponding record to add
+               --  the pragma.
+
+               Set_Analyzed (Asp_Copy, False);
+               Append_To (Alist, Asp_Copy);
+               exit;
+            end if;
+
+            Next (Aspect);
+         end loop;
+      end if;
+
       --  Now we can construct the record type declaration. Note that this
       --  record is "limited tagged". It is "limited" to reflect the underlying
       --  limitedness of the task or protected object that it represents, and
@@ -1405,6 +1440,7 @@ package body Exp_Ch9 is
       return
         Make_Full_Type_Declaration (Loc,
           Defining_Identifier => Rec_Ent,
+          Aspect_Specifications => Alist,
           Discriminant_Specifications => Dlist,
           Type_Definition =>
             Make_Record_Definition (Loc,
@@ -6446,7 +6482,7 @@ package body Exp_Ch9 is
    --             _clean;  --  Added by Exp_Ch7.Expand_Cleanup_Actions
    --          end;
    --       exception
-   --          when Abort_Signal => Abort_Undefer;
+   --          when Abort_Signal => null;
    --       end;
 
    --       parm := P.param;
@@ -6509,7 +6545,7 @@ package body Exp_Ch9 is
    --           _clean;  --  Added by Exp_Ch7.Expand_Cleanup_Actions
    --        end;
    --     exception
-   --        when Abort_Signal => Abort_Undefer;
+   --        when Abort_Signal => null;
    --     end;
 
    --     if not Cancelled (Bnn) then
@@ -6590,7 +6626,7 @@ package body Exp_Ch9 is
    --                   _clean;  --  Added by Exp_Ch7.Expand_Cleanup_Actions
    --                end;
    --             exception
-   --                when Abort_Signal => Abort_Undefer;
+   --                when Abort_Signal => null;
    --             end;
 
    --             if not Cancelled (Bnn) then
@@ -6623,7 +6659,7 @@ package body Exp_Ch9 is
    --                      _clean;  --  Added by Exp_Ch7.Expand_Cleanup_Actions
    --                   end;
    --                exception
-   --                   when Abort_Signal => Abort_Undefer;
+   --                   when Abort_Signal => null;
    --                end;
 
    --                if not U then
@@ -6657,7 +6693,6 @@ package body Exp_Ch9 is
       Abrt : constant Node_Id    := Abortable_Part (N);
       Trig : constant Node_Id    := Triggering_Alternative (N);
 
-      Abort_Block_Ent   : Entity_Id;
       Abortable_Block   : Node_Id;
       Actuals           : List_Id;
       Astats            : List_Id;
@@ -6678,7 +6713,6 @@ package body Exp_Ch9 is
       Ename             : Node_Id;
       Enqueue_Call      : Node_Id;
       Formals           : List_Id;
-      Hdle              : List_Id;
       Index             : Node_Id;
       Lim_Typ_Stmts     : List_Id;
       N_Orig            : Node_Id;
@@ -6932,17 +6966,11 @@ package body Exp_Ch9 is
             --    begin
             --       Cleanup_Block
             --    exception
-            --       when Abort_Signal => Abort_Undefer;
+            --       when Abort_Signal => null;
             --    end;
 
-            Abort_Block_Ent := Make_Temporary (Loc, 'A');
-            ProtE_Stmts :=
-              New_List (
-                Make_Implicit_Label_Declaration (Loc,
-                  Defining_Identifier => Abort_Block_Ent),
-
-                Build_Abort_Block
-                  (Loc, Abort_Block_Ent, Cleanup_Block_Ent, Cleanup_Block));
+            ProtE_Stmts := New_List (
+              Build_Abort_Block (Loc, Cleanup_Block_Ent, Cleanup_Block));
 
             --  Generate:
             --    if not Cancelled (Bnn) then
@@ -7045,18 +7073,11 @@ package body Exp_Ch9 is
             --    begin
             --       Cleanup_Block
             --    exception
-            --       when Abort_Signal => Abort_Undefer;
+            --       when Abort_Signal => null;
             --    end;
 
-            Abort_Block_Ent := Make_Temporary (Loc, 'A');
-
             Append_To (TaskE_Stmts,
-              Make_Implicit_Label_Declaration (Loc,
-                Defining_Identifier => Abort_Block_Ent));
-
-            Append_To (TaskE_Stmts,
-              Build_Abort_Block
-                (Loc, Abort_Block_Ent, Cleanup_Block_Ent, Cleanup_Block));
+              Build_Abort_Block (Loc, Cleanup_Block_Ent, Cleanup_Block));
 
             --  Generate:
             --    if not T then
@@ -7201,10 +7222,6 @@ package body Exp_Ch9 is
                 Prefix         => New_Occurrence_Of (Dblock_Ent, Loc),
                 Attribute_Name => Name_Unchecked_Access));
 
-            --  Create the inner block to protect the abortable part
-
-            Hdle := New_List (Build_Abort_Block_Handler (Loc));
-
             Prepend_To (Astats, Build_Runtime_Call (Loc, RE_Abort_Undefer));
 
             Abortable_Block :=
@@ -7216,6 +7233,18 @@ package body Exp_Ch9 is
                 Has_Created_Identifier     => True,
                 Is_Asynchronous_Call_Block => True);
 
+            --  Wrap the abortable block in an exception handling block
+
+            --  Generate:
+            --    begin
+            --       Abortable_Block
+            --    exception
+            --       when Abort_Signal => null;
+            --    end;
+
+            Stmts := New_List (
+              Build_Abort_Block (Loc, Blk_Ent, Abortable_Block));
+
             --  Append call to if Enqueue (When, DB'Unchecked_Access) then
 
             Rewrite (Ecall,
@@ -7224,16 +7253,7 @@ package body Exp_Ch9 is
                   Make_Function_Call (Loc,
                     Name => Enqueue_Call,
                     Parameter_Associations => Parameter_Associations (Ecall)),
-                Then_Statements =>
-                  New_List (Make_Block_Statement (Loc,
-                    Handled_Statement_Sequence =>
-                      Make_Handled_Sequence_Of_Statements (Loc,
-                        Statements => New_List (
-                          Make_Implicit_Label_Declaration (Loc,
-                            Defining_Identifier => Blk_Ent,
-                            Label_Construct     => Abortable_Block),
-                          Abortable_Block),
-                        Exception_Handlers => Hdle)))));
+                Then_Statements => Stmts));
 
             Stmts := New_List (Ecall);
 
@@ -7351,31 +7371,21 @@ package body Exp_Ch9 is
              Has_Created_Identifier => True,
              Is_Asynchronous_Call_Block => True);
 
+         --  Wrap the abortable block in an exception handling block
+
+         --  Generate:
+         --    begin
+         --       Abortable_Block
+         --    exception
+         --       when Abort_Signal => null;
+         --    end;
+
          Stmts := New_List (
-           Make_Block_Statement (Loc,
-             Handled_Statement_Sequence =>
-               Make_Handled_Sequence_Of_Statements (Loc,
-                 Statements => New_List (
-                   Make_Implicit_Label_Declaration (Loc,
-                     Defining_Identifier => Blk_Ent,
-                     Label_Construct     => Abortable_Block),
-                   Abortable_Block),
+           Build_Abort_Block (Loc, Blk_Ent, Abortable_Block),
 
-               --  exception
-
-                 Exception_Handlers => New_List (
-                   Make_Implicit_Exception_Handler (Loc,
-
-               --  when Abort_Signal =>
-               --     null;
-
-                     Exception_Choices =>
-                       New_List (New_Occurrence_Of (Stand.Abort_Signal, Loc)),
-                     Statements => New_List (Make_Null_Statement (Loc)))))),
-
-         --  if not Cancelled (Bnn) then
-         --     triggered statements
-         --  end if;
+           --  if not Cancelled (Bnn) then
+           --     triggered statements
+           --  end if;
 
            Make_Implicit_If_Statement (N,
              Condition => Make_Op_Not (Loc,
@@ -7431,10 +7441,6 @@ package body Exp_Ch9 is
 
          Call := Stmt;
 
-         --  Create the inner block to protect the abortable part
-
-         Hdle := New_List (Build_Abort_Block_Handler (Loc));
-
          if Abort_Allowed then
             Prepend_To (Astats, Build_Runtime_Call (Loc, RE_Abort_Undefer));
          end if;
@@ -7447,16 +7453,17 @@ package body Exp_Ch9 is
              Has_Created_Identifier     => True,
              Is_Asynchronous_Call_Block => True);
 
+         --  Wrap the abortable block in an exception handling block
+
+         --  Generate:
+         --    begin
+         --       Abortable_Block
+         --    exception
+         --       when Abort_Signal => null;
+         --    end;
+
          Insert_After (Call,
-           Make_Block_Statement (Loc,
-             Handled_Statement_Sequence =>
-               Make_Handled_Sequence_Of_Statements (Loc,
-                 Statements => New_List (
-                   Make_Implicit_Label_Declaration (Loc,
-                     Defining_Identifier => Blk_Ent,
-                     Label_Construct     => Abortable_Block),
-                   Abortable_Block),
-                 Exception_Handlers => Hdle)));
+           Build_Abort_Block (Loc, Blk_Ent, Abortable_Block));
 
          --  Create new call statement
 
@@ -8316,6 +8323,11 @@ package body Exp_Ch9 is
       --     <protected-procedure-name>P (Param1 .. ParamN);
       --  end <protected-procedure-name>
 
+      procedure Unanalyze_Use_Clauses (Op_Body : Node_Id);
+      --  Use and Use_Type clauses in the tree rooted at Op_Body
+      --  that have already been analyzed need to be marked as unanalyzed
+      --  because otherwise they will be ineffective in their new context.
+
       ---------------------------------------
       -- Build_Dispatching_Subprogram_Body --
       ---------------------------------------
@@ -8377,6 +8389,31 @@ package body Exp_Ch9 is
                Make_Handled_Sequence_Of_Statements (Loc, Stmts));
       end Build_Dispatching_Subprogram_Body;
 
+      ---------------------------
+      -- Unanalyze_Use_Clauses --
+      ---------------------------
+
+      procedure Unanalyze_Use_Clauses (Op_Body : Node_Id) is
+
+         function Process_One_Node (N : Node_Id) return Traverse_Result;
+         --  If N is a use or use type node then unanalyze it.
+
+         procedure Process_Tree is new Traverse_Proc (Process_One_Node);
+
+         function Process_One_Node (N : Node_Id) return Traverse_Result is
+         begin
+            if Nkind (N) in N_Use_Package_Clause | N_Use_Type_Clause then
+               Set_Analyzed (N, False);
+            end if;
+            return OK; --  return Skip if Is_Analyzed (N) ?
+         end Process_One_Node;
+
+      --  Start of processing for Analyze_Use_Clauses
+
+      begin
+         Process_Tree (Op_Body);
+      end Unanalyze_Use_Clauses;
+
    --  Start of processing for Expand_N_Protected_Body
 
    begin
@@ -8425,6 +8462,17 @@ package body Exp_Ch9 is
                      New_Op_Body :=
                        Build_Unprotected_Subprogram_Body (Op_Body, Pid);
                   end if;
+
+                  --  Ugly.
+                  --  We are going to perform name resolution in analysis of
+                  --  this new body, but any already-analyzed use clauses
+                  --  will be ineffective in this new context unless we take
+                  --  action to "reactivate" them. So that's what we do here.
+                  --  We arguably shouldn't be performing name resolution
+                  --  here (just like we shouldn't perform name resolution in
+                  --  an expanded instance body), but that's a larger issue.
+
+                  Unanalyze_Use_Clauses (New_Op_Body);
 
                   Insert_After (Current_Node, New_Op_Body);
                   Current_Node := New_Op_Body;
@@ -9216,6 +9264,25 @@ package body Exp_Ch9 is
 
       Analyze (Rec_Decl, Suppress => All_Checks);
 
+      --  Analyze aspects of the corresponding record type. They may have been
+      --  propagated to it and its analysis is required to add the pragma (see
+      --  propagation of aspect First_Controlling_Parameter in the subprogram
+      --  Build_Corresponding_Record).
+
+      if Has_Aspects (Rec_Decl) then
+         Analyze_Aspect_Specifications (Rec_Decl, Rec_Id);
+
+      --  Handle aspects that may have been implicitly inherited and must be
+      --  explicitly propagated to the corresponding record type. This applies
+      --  specifically when the First_Controlling_Parameter aspect has been
+      --  implicitly inherited from an implemented interface.
+
+      elsif Present (Interface_List (Parent (Prot_Typ)))
+        and then Has_First_Controlling_Parameter_Aspect (Prot_Typ)
+      then
+         Set_Has_First_Controlling_Parameter_Aspect (Rec_Id);
+      end if;
+
       --  Ada 2005 (AI-345): Construct the primitive entry wrappers before
       --  the corresponding record is frozen. If any wrappers are generated,
       --  Current_Node is updated accordingly.
@@ -9376,8 +9443,7 @@ package body Exp_Ch9 is
             Need_Array : Boolean := False;
 
          begin
-            --  First check if there is any Max_Queue_Length,
-            --  Max_Entry_Queue_Length or Max_Entry_Queue_Depth pragma.
+            --  First check if there is any Max_[Entry_]Queue_Length pragma
 
             Item := First_Entity (Prot_Typ);
             while Present (Item) loop
@@ -12122,6 +12188,25 @@ package body Exp_Ch9 is
 
       Analyze (Rec_Decl);
 
+      --  Analyze aspects of the corresponding record type. They may have been
+      --  propagated to it and its analysis is required to add the pragma (see
+      --  propagation of aspect First_Controlling_Parameter in the subprogram
+      --  Build_Corresponding_Record).
+
+      if Has_Aspects (Rec_Decl) then
+         Analyze_Aspect_Specifications (Rec_Decl, Rec_Ent);
+
+      --  Handle aspects that may have been implicitly inherited and must be
+      --  explicitly propagated to the corresponding record type. This applies
+      --  specifically when the First_Controlling_Parameter aspect has been
+      --  implicitly inherited from an implemented interface.
+
+      elsif Present (Interface_List (Parent (Tasktyp)))
+        and then Has_First_Controlling_Parameter_Aspect (Tasktyp)
+      then
+         Set_Has_First_Controlling_Parameter_Aspect (Rec_Ent);
+      end if;
+
       --  Create the declaration of the task body procedure
 
       Proc_Spec := Build_Task_Proc_Specification (Tasktyp);
@@ -14755,12 +14840,34 @@ package body Exp_Ch9 is
             Set_Scope (Entity (Identifier (N)), E);
             return Skip;
 
+         --  Reset scope for object declaration which scope is the task entry.
+         --
+         --  Also look inside the declaration (in particular in the expression
+         --  if present) because we may have expanded to something like:
+
+         --  O1 : Typ := do
+         --    TMP1 : OTyp := ...;
+         --    ...
+         --    in TMP1;
+
+         --  And the scope for TMP1 is Scope (O1). We need to look inside the
+         --  declaration to also reset such scope.
+
+         elsif Nkind (N) = N_Object_Declaration then
+            if Present (Scope (Defining_Entity (N)))
+              and then Ekind (Scope (Defining_Entity (N)))
+                in E_Entry | E_Entry_Family
+            then
+               Set_Scope (Defining_Entity (N), E);
+            end if;
+
          --  Ditto for a package declaration or a full type declaration, etc.
 
          elsif (Nkind (N) = N_Package_Declaration
                  and then N /= Specification (N))
            or else Nkind (N) in N_Declaration
            or else Nkind (N) in N_Renaming_Declaration
+           or else Nkind (N) in N_Implicit_Label_Declaration
          then
             Set_Scope (Defining_Entity (N), E);
             return Skip;

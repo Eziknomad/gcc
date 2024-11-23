@@ -55,7 +55,7 @@ public:
   void dump_to_file (FILE *outf) const;
   void dump () const;
 
-  json::object *to_json () const;
+  std::unique_ptr<json::object> to_json () const;
 
   engine *get_engine () const { return m_engine; }
   region_model_manager *get_model_manager () const;
@@ -117,9 +117,9 @@ public:
 	      pretty_printer *pp) const;
   void dump (bool simple) const;
 
-  json::object *to_json () const;
+  std::unique_ptr<json::object> to_json () const;
 
-  std::unique_ptr<text_art::widget>
+  std::unique_ptr<text_art::tree_widget>
   make_dump_widget (const text_art::dump_widget_info &dwi,
 		    const region_model *model) const;
 
@@ -231,9 +231,10 @@ public:
   void dump (const extrinsic_state &ext_state, bool simple) const;
   void dump () const;
 
-  json::object *to_json (const extrinsic_state &ext_state) const;
+  std::unique_ptr<json::object>
+  to_json (const extrinsic_state &ext_state) const;
 
-  std::unique_ptr<text_art::widget>
+  std::unique_ptr<text_art::tree_widget>
   make_dump_widget (const text_art::dump_widget_info &dwi) const;
 
   void push_frame (const extrinsic_state &ext_state, const function &fun);

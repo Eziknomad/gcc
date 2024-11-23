@@ -19,7 +19,6 @@ along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
 #include "config.h"
-#define INCLUDE_MEMORY
 #define INCLUDE_VECTOR
 #include "system.h"
 #include "coretypes.h"
@@ -86,13 +85,9 @@ svalue::dump () const
 DEBUG_FUNCTION void
 svalue::dump (bool simple) const
 {
-  pretty_printer pp;
-  pp_format_decoder (&pp) = default_tree_printer;
-  pp_show_color (&pp) = pp_show_color (global_dc->printer);
-  pp.set_output_stream (stderr);
+  tree_dump_pretty_printer pp (stderr);
   dump_to_pp (&pp, simple);
   pp_newline (&pp);
-  pp_flush (&pp);
 }
 
 /* Generate a textual representation of this svalue for debugging purposes.  */
@@ -108,11 +103,11 @@ svalue::get_desc (bool simple) const
 
 /* Return a new json::string describing the svalue.  */
 
-json::value *
+std::unique_ptr<json::value>
 svalue::to_json () const
 {
   label_text desc = get_desc (true);
-  json::value *sval_js = new json::string (desc.get ());
+  auto sval_js = ::make_unique<json::string> (desc.get ());
   return sval_js;
 }
 
@@ -230,7 +225,7 @@ svalue::maybe_print_for_user (pretty_printer *pp,
    (a) print_dump_widget_label, to populate the text of a tree_widget, and
    (b) add_dump_widget_children, to add children to the tree_widget.  */
 
-std::unique_ptr<text_art::widget>
+std::unique_ptr<text_art::tree_widget>
 svalue::make_dump_widget (const text_art::dump_widget_info &dwi,
 			  const char *prefix) const
 {
@@ -252,7 +247,7 @@ svalue::make_dump_widget (const text_art::dump_widget_info &dwi,
 
   add_dump_widget_children (*w, dwi);
 
-  return std::move (w);
+  return w;
 }
 
 /* If this svalue is a constant_svalue, return the underlying tree constant.

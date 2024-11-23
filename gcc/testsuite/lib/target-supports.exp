@@ -639,6 +639,7 @@ proc check_effective_target_trampolines { } {
     if { [istarget avr-*-*]
 	 || [istarget msp430-*-*]
 	 || [istarget nvptx-*-*]
+	 || [istarget ft32-*-*]
 	 || [istarget pru-*-*]
 	 || [istarget bpf-*-*] } {
 	return 0;
@@ -859,10 +860,25 @@ proc check_profiling_available { test_what } {
 # in Section 4 of C99 standard. Effectively, it is a target which supports no
 # extra headers or libraries other than what is considered essential.
 proc check_effective_target_freestanding { } {
-    if { [istarget nvptx-*-*] } {
-	return 1
-    }
     return 0
+}
+
+# Return 1 if a hosted implementation of libstdc++ is available
+# (i.e. not freestanding).  Language must be c++.
+proc check_effective_target_hostedlib { } {
+    if [check_effective_target_freestanding] {
+        return 0
+    }
+    if [check_effective_target_c++] {
+        return [check_no_compiler_messages hostedlib assembly {
+            #include <bits/c++config.h>
+            #if ! _GLIBCXX_HOSTED
+            #error not hosted
+            #endif
+	    int hosted;
+        }]
+    }
+    return 1
 }
 
 # Check to see that file I/O functions are available.
@@ -1911,6 +1927,28 @@ proc check_effective_target_riscv_zaamo { } {
     }]
 }
 
+# Return 1 if the target arch supports the atomic BHA extension, 0 otherwise.
+# Cache the result.
+
+proc check_effective_target_riscv_zabha { } {
+    return [check_no_compiler_messages riscv_ext_zabha assembly {
+       #ifndef __riscv_zabha
+       #error "Not __riscv_zabha"
+       #endif
+    }]
+}
+
+# Return 1 if the target arch supports the atomic CAS extension, 0 otherwise.
+# Cache the result.
+
+proc check_effective_target_riscv_zacas { } {
+    return [check_no_compiler_messages riscv_ext_zacas assembly {
+       #ifndef __riscv_zacas
+       #error "Not __riscv_zacas"
+       #endif
+    }]
+}
+
 # Return 1 if the target arch supports the double precision floating point
 # extension, 0 otherwise.  Cache the result.
 
@@ -1932,6 +1970,43 @@ proc check_effective_target_riscv_v { } {
        #endif
     }]
 }
+
+# Return 1 if the target runtime supports 256-bit vectors, 0 otherwise.
+# Cache the result.
+
+proc check_effective_target_rvv_zvl256b_ok { } {
+    # Check if the target has a VLENB of 32.
+    set gcc_march [riscv_get_arch]
+    return [check_runtime ${gcc_march}_exec {
+	int main()
+	{
+	  int vlenb = 0;
+	  asm ("csrr %0,vlenb" : "=r" (vlenb) : : );
+	  if (vlenb == 32)
+	    return 0;
+	  return 1;
+	}
+      } "-march=${gcc_march}"]
+}
+
+# Return 1 if the target runtime supports 512-bit vectors, 0 otherwise.
+# Cache the result.
+
+proc check_effective_target_rvv_zvl512b_ok { } {
+    # Check if the target has a VLENB of 64.
+    set gcc_march [riscv_get_arch]
+    return [check_runtime ${gcc_march}_exec {
+	int main()
+	{
+	  int vlenb = 0;
+	  asm ("csrr %0,vlenb" : "=r" (vlenb) : : );
+	  if (vlenb == 64)
+	    return 0;
+	  return 1;
+	}
+      } "-march=${gcc_march}"]
+}
+
 
 # Return 1 if the target arch supports the Zvfh extension, 0 otherwise.
 # Cache the result.
@@ -2126,10 +2201,13 @@ proc check_effective_target_riscv_v_misalign_ok { } {
     return 0
 }
 
+# Deduce the string for the RISC-V architecture targeted by the compiler
+# under test.  Also take into account the global compiler flags passed
+# by testsuite.
 proc riscv_get_arch { } {
     set gcc_march ""
     # ??? do we neeed to add more extensions to the list below?
-    foreach ext { i m a f d q c v zicsr zifencei zfh zba zbb zbc zbs zvbb zvfh ztso zaamo zalrsc } {
+    foreach ext { i e m a f d q c b v zicsr zifencei zfh zba zbb zbc zbs zvbb zvfh ztso zaamo zalrsc zabha zacas } {
 	if { [check_no_compiler_messages  riscv_ext_$ext assembly [string map [list DEF __riscv_$ext] {
 		#ifndef DEF
 		#error "Not DEF"
@@ -2156,7 +2234,7 @@ proc riscv_get_arch { } {
 
 proc add_options_for_riscv_a { flags } {
     if { [lsearch $flags -march=*] >= 0 } {
-	# If there are multiple -march flags, we have to adjust all of them.
+	# If there are any -march flags, we have to adjust all of them.
 	set expanded_flags [regsub -all -- {((?:^|[[:space:]])-march=rv[[:digit:]]*)g+} $flags \\1imafd ]
 	return [regsub -all -- {((?:^|[[:space:]])-march=rv[[:digit:]]*[b-eg-rt-wy]*)a*} $expanded_flags \\1a ]
     }
@@ -2166,9 +2244,41 @@ proc add_options_for_riscv_a { flags } {
     return "$flags -march=[regsub {(rv[[:digit:]]*[b-eg-rt-wy]*)a*} [riscv_get_arch] &a]"
 }
 
+proc remove_options_for_riscv_a_only { flags } {
+    # Only remove the 'a' extension. Useful when removing zalrsc/zaamo.
+    if { [lsearch $flags -march=*] >= 0 } {
+	# If there are any -march flags, we have to adjust all of them.
+	set expanded_flags [regsub -all -- {((?:^|[[:space:]])-march=rv[[:digit:]]*)g+} $flags \\1imafd ]
+	set modified_flags [regsub -all -- {((?:^|[[:space:]])-march=rv[[:digit:]]*[b-eg-rt-wy]*)a*} $expanded_flags \\1 ]
+	return $modified_flags
+    }
+    if { [check_effective_target_riscv_a] } {
+	# Manually specify the -march and remove it with another call
+	return [remove_options_for_riscv_a_only "$flags -march=[riscv_get_arch]"]
+    }
+    return $flags
+}
+
+proc remove_options_for_riscv_a { flags } {
+    # Remove the 'a' extension and implied zalrsc/zaamo extensions.
+    if { [lsearch $flags -march=*] >= 0 } {
+	# If there are any -march flags, we have to adjust all of them.
+	set modified_flags [remove_options_for_riscv_a_only $flags]
+	# Also removed implied extensions
+	set modified_flags [remove_options_for_riscv_z_ext zaamo $flags]
+	set modified_flags [remove_options_for_riscv_z_ext zalrsc $flags]
+	return $modified_flags
+    }
+    if { [check_effective_target_riscv_a] } {
+	# Manually specify the -march and remove it with another call
+	return [remove_options_for_riscv_a "$flags -march=[riscv_get_arch]"]
+    }
+    return $flags
+}
+
 proc add_options_for_riscv_d { flags } {
     if { [lsearch $flags -march=*] >= 0 } {
-	# If there are multiple -march flags, we have to adjust all of them.
+	# If there are any -march flags, we have to adjust all of them.
 	return [regsub -all -- {((?:^|[[:space:]])-march=rv[[:digit:]]*[a-ce-rt-wy]*)d*} $flags \\1d ]
     }
     if { [check_effective_target_riscv_d] } {
@@ -2177,9 +2287,21 @@ proc add_options_for_riscv_d { flags } {
     return "$flags -march=[regsub {[[:alnum:]]*} [riscv_get_arch] &d]"
 }
 
+proc remove_options_for_riscv_d { flags } {
+    if { [lsearch $flags -march=*] >= 0 } {
+	# If there are any -march flags, we have to adjust all of them.
+	return [regsub -all -- {((?:^|[[:space:]])-march=rv[[:digit:]]*[a-ce-rt-wy]*)d*} $flags \\1d ]
+    }
+    if { [check_effective_target_riscv_d] } {
+	# Manually specify the -march and remove it with another call
+	return [remove_options_for_riscv_d "$flags -march=[riscv_get_arch]"]
+    }
+    return $flags
+}
+
 proc add_options_for_riscv_v { flags } {
     if { [lsearch $flags -march=*] >= 0 } {
-	# If there are multiple -march flags, we have to adjust all of them.
+	# If there are any -march flags, we have to adjust all of them.
 	return [regsub -all -- {((?:^|[[:space:]])-march=rv[[:digit:]]*[a-rt-uwy]*)v*} $flags \\1v ]
     }
     if { [check_effective_target_riscv_v] } {
@@ -2188,76 +2310,144 @@ proc add_options_for_riscv_v { flags } {
     return "$flags -march=[regsub {[[:alnum:]]*} [riscv_get_arch] &v]"
 }
 
-proc add_options_for_riscv_zaamo { flags } {
+proc remove_options_for_riscv_v { flags } {
     if { [lsearch $flags -march=*] >= 0 } {
-	# If there are multiple -march flags, we have to adjust all of them.
-	set flags [regsub -all -- {(?:^|[[:space:]])-march=[[:alnum:]_.]*} $flags &_zaamo ]
-	return [regsub -all -- {((?:^|[[:space:]])-march=[[:alnum:]_.]*_zaamo[[:alnum:]_.]*)_zaamo} $flags \\1 ]
+	# If there are any -march flags, we have to adjust all of them.
+	return [regsub -all -- {((?:^|[[:space:]])-march=rv[[:digit:]]*[a-rt-uwy]*)v*} $flags \\1 ]
     }
-    if { [check_effective_target_riscv_zaamo] } {
+    if { [check_effective_target_riscv_v] } {
+	# Manually specify the -march and remove it with another call
+	return [remove_options_for_riscv_v "$flags -march=[riscv_get_arch]"]
+    }
+    return $flags
+}
+
+proc add_options_for_riscv_z_ext { ext flags } {
+    if {[lsearch $flags "-march=*"] >= 0} {
+        # If there are any -march flags, we have to adjust all of them.
+        set modified_flags {}
+        foreach flag $flags {
+            if {[regexp {^-march=(\S+)} $flag match march_name]} {
+                if {![string match "*_${ext}*" $march_name]} {
+                    set march_name "${march_name}_${ext}"
+                }
+                lappend modified_flags "-march=$march_name"
+            } else {
+                lappend modified_flags $flag
+            }
+        }
+        return [join $modified_flags " "]
+    }
+    if { [check_effective_target_riscv_$ext] } {
 	return "$flags"
     }
-    return "$flags -march=[riscv_get_arch]_zaamo"
+    return "$flags -march=[riscv_get_arch]_${ext}"
+}
+
+proc remove_options_for_riscv_z_ext { ext flags } {
+    if { [lsearch $flags -march=*] >= 0 } {
+	# If there are multiple -march flags, we have to adjust all of them.
+	set modified_flags ""
+	foreach flag $flags {
+	    if {[regexp {^-march=(\S+)} $flag -> march_name]} {
+		# Remove "_ext" from the march_name if present
+		set march_name [string map [list _${ext} {}] $march_name]
+		lappend modified_flags "-march=$march_name"
+	    } else {
+		lappend modified_flags $flag
+	    }
+	}
+	return [join $modified_flags " "]
+    }
+    if { [check_effective_target_riscv_$ext] } {
+	# Manually specify the -march and remove it with another call
+	return [remove_options_for_riscv_z_ext $ext "$flags -march=[riscv_get_arch]"]
+    }
+    return $flags
+}
+
+proc add_options_for_riscv_zaamo { flags } {
+    return [add_options_for_riscv_z_ext zaamo $flags]
+}
+
+proc remove_options_for_riscv_zaamo { flags } {
+    set modified_flags [remove_options_for_riscv_z_ext zaamo $flags]
+    # If zabha is set then zaamo will be implied. We need to remove zabha
+    # as well.
+    set modified_flags [remove_options_for_riscv_z_ext zabha $modified_flags]
+    # If zacas is set then zaamo will be implied. We need to remove zacas
+    # as well.
+    set modified_flags [remove_options_for_riscv_z_ext zacas $modified_flags]
+    # If 'a' is set then zaamo will be implied. We need to downgrade instances
+    # of 'a' to 'zalrsc'
+    set no_a_flags [remove_options_for_riscv_a_only $modified_flags]
+    if {![string equal $modified_flags $no_a_flags]} {
+	# 'a' was removed, add 'zalrsc' since it was previously implied
+	set modified_flags [add_options_for_riscv_zalrsc $no_a_flags]
+    }
+    return $modified_flags
 }
 
 proc add_options_for_riscv_zalrsc { flags } {
-    if { [lsearch $flags -march=*] >= 0 } {
-	# If there are multiple -march flags, we have to adjust all of them.
-	set flags [regsub -all -- {(?:^|[[:space:]])-march=[[:alnum:]_.]*} $flags &_zalrsc ]
-	return [regsub -all -- {((?:^|[[:space:]])-march=[[:alnum:]_.]*_zalrsc[[:alnum:]_.]*)_zalrsc} $flags \\1 ]
+    return [add_options_for_riscv_z_ext zalrsc $flags]
+}
+
+proc remove_options_for_riscv_zalrsc { flags } {
+    set modified_flags [remove_options_for_riscv_z_ext zalrsc $flags]
+    # If 'a' is set then zalrsc will be implied. We need to downgrade instances
+    # of 'a' to 'zaamo'
+    set no_a_flags [remove_options_for_riscv_a_only $modified_flags]
+    if {![string equal $modified_flags $no_a_flags]} {
+	# 'a' was removed, add 'zalrsc' since it was previously implied
+	set modified_flags [add_options_for_riscv_zalrsc $no_a_flags]
     }
-    if { [check_effective_target_riscv_zalrsc] } {
-	return "$flags"
-    }
-    return "$flags -march=[riscv_get_arch]_zalrsc"
+    return $modified_flags
+}
+
+proc add_options_for_riscv_zabha { flags } {
+    return [add_options_for_riscv_z_ext zabha $flags]
+}
+
+proc remove_options_for_riscv_zabha { flags } {
+    set modified_flags [remove_options_for_riscv_zaamo $flags]
+    return [remove_options_for_riscv_z_ext zabha $modified_flags]
+}
+
+proc add_options_for_riscv_zacas { flags } {
+    return [add_options_for_riscv_z_ext zacas $flags]
+}
+
+proc remove_options_for_riscv_zacas { flags } {
+    set modified_flags [remove_options_for_riscv_zaamo $flags]
+    return [remove_options_for_riscv_z_ext zacas $modified_flags]
 }
 
 proc add_options_for_riscv_zfh { flags } {
-    if { [lsearch $flags -march=*] >= 0 } {
-	# If there are multiple -march flags, we have to adjust all of them.
-	set flags [regsub -all -- {(?:^|[[:space:]])-march=[[:alnum:]_.]*} $flags &_zfh ]
-	return [regsub -all -- {((?:^|[[:space:]])-march=[[:alnum:]_.]*_zfh[[:alnum:]_.]*)_zfh} $flags \\1 ]
-    }
-    if { [check_effective_target_riscv_zfh] } {
-	return "$flags"
-    }
-    return "$flags -march=[riscv_get_arch]_zfh"
+    return [add_options_for_riscv_z_ext zfh $flags]
+}
+
+proc remove_options_for_riscv_zfh { flags } {
+    return [remove_options_for_riscv_z_ext zfh $flags]
 }
 
 proc add_options_for_riscv_ztso { flags } {
-    if { [lsearch $flags -march=*] >= 0 } {
-	# If there are multiple -march flags, we have to adjust all of them.
-	set flags [regsub -all -- {(?:^|[[:space:]])-march=[[:alnum:]_.]*} $flags &_ztso ]
-	return [regsub -all -- {((?:^|[[:space:]])-march=[[:alnum:]_.]*_ztso[[:alnum:]_.]*)_ztso} $flags \\1 ]
-    }
-    if { [check_effective_target_riscv_ztso] } {
-	return "$flags"
-    }
-    return "$flags -march=[riscv_get_arch]_ztso"
+    return [add_options_for_riscv_z_ext ztso $flags]
 }
 
-proc add_options_for_riscv_zvfh { flags } {
-    if { [lsearch $flags -march=*] >= 0 } {
-	# If there are multiple -march flags, we have to adjust all of them.
-	set flags [regsub -all -- {(?:^|[[:space:]])-march=[[:alnum:]_.]*} $flags &_zvfh ]
-	return [regsub -all -- {((?:^|[[:space:]])-march=[[:alnum:]_.]*_zvfh[[:alnum:]_.]*)_zvfh} $flags \\1 ]
-    }
-    if { [check_effective_target_riscv_zvfh] } {
-	return "$flags"
-    }
-    return "$flags -march=[riscv_get_arch]_zvfh"
+proc remove_options_for_riscv_ztso { flags } {
+    return [remove_options_for_riscv_z_ext ztso $flags]
+}
+
+proc remove_options_for_riscv_zvfh { flags } {
+    return [add_options_for_riscv_z_ext zvfh $flags]
 }
 
 proc add_options_for_riscv_zvbb { flags } {
-    if { [lsearch $flags -march=*] >= 0 } {
-	# If there are multiple -march flags, we have to adjust all of them.
-	set flags [regsub -all -- {(?:^|[[:space:]])-march=[[:alnum:]_.]*} $flags &_zvbb ]
-	return [regsub -all -- {((?:^|[[:space:]])-march=[[:alnum:]_.]*_zvbb[[:alnum:]_.]*)_zvbb} $flags \\1 ]
-    }
-    if { [check_effective_target_riscv_zvbb] } {
-	return "$flags"
-    }
-    return "$flags -march=[riscv_get_arch]_zvbb"
+    return [add_options_for_riscv_z_ext zvbb $flags]
+}
+
+proc remove_options_for_riscv_zvbb { flags } {
+    return [add_options_for_riscv_z_ext zvbb $flags]
 }
 
 # Return 1 if the target OS supports running SSE executables, 0
@@ -2714,30 +2904,6 @@ proc check_ppc_cpu_supports_hw_available { } {
     }]
 }
 
-# Return 1 if the target supports executing 750CL paired-single instructions, 0
-# otherwise.  Cache the result.
-
-proc check_750cl_hw_available { } {
-    return [check_cached_effective_target 750cl_hw_available {
-	# If this is not the right target then we can skip the test.
-	if { ![istarget powerpc-*paired*] } {
-	    expr 0
-	} else {
-	    check_runtime_nocache 750cl_hw_available {
-		 int main()
-		 {
-		 #ifdef __MACH__
-		   asm volatile ("ps_mul v0,v0,v0");
-		 #else
-		   asm volatile ("ps_mul 0,0,0");
-		 #endif
-		   return 0;
-		 }
-	    } "-mpaired"
-	}
-    }]
-}
-
 # Return 1 if the target supports executing power8 vector instructions, 0
 # otherwise.  Cache the result.
 
@@ -2753,11 +2919,9 @@ proc check_p8vector_hw_available { } {
 	    check_runtime_nocache p8vector_hw_available {
 		int main()
 		{
-		#ifdef __MACH__
-		  asm volatile ("xxlorc vs0,vs0,vs0");
-		#else
-		  asm volatile ("xxlorc 0,0,0");
-		#endif
+		  vector long long v1 = {0x1, 0x2};
+		  vector long long v2;
+		  asm ("xxlorc %0,%1,%1" : "=wa" (v2) : "wa" (v1));
 		  return 0;
 		}
 	    } $options
@@ -3054,11 +3218,9 @@ proc check_vsx_hw_available { } {
 	    check_runtime_nocache vsx_hw_available {
 		int main()
 		{
-		#ifdef __MACH__
-		  asm volatile ("xxlor vs0,vs0,vs0");
-		#else
-		  asm volatile ("xxlor 0,0,0");
-		#endif
+		  vector int v1 = {0, 0, 0, 0};
+		  vector int v2;
+		  asm ("xxlor %0,%1,%1" : "=wa" (v2) : "wa" (v1));
 		  return 0;
 		}
 	    } $options
@@ -3087,11 +3249,9 @@ proc check_vmx_hw_available { } {
 	    check_runtime_nocache vmx_hw_available {
 		int main()
 		{
-		#ifdef __MACH__
-		  asm volatile ("vor v0,v0,v0");
-		#else
-		  asm volatile ("vor 0,0,0");
-		#endif
+		  vector int v1 = {0, 0, 0, 0};
+		  vector int v2;
+		  asm ("vor %0,%1,%1" : "=v" (v2) : "v" (v1));
 		  return 0;
 		}
 	    } $options
@@ -3806,6 +3966,17 @@ proc check_effective_target_floatn_nx_runtime {} {
     return 1
 }
 
+# Return 1 when double is at least as good as _Float32x, i.e. double can
+# be used to emulate _Float32x.
+
+proc check_effective_target_double_float32xplus {} {
+    return [check_no_compiler_messages_nocache double_float32xplus object {
+	_Float32x x;
+	int dummy1[__DBL_MANT_DIG__ >= __FLT32X_MANT_DIG__ ? 1 : -1];
+	int dummy2[__DBL_MAX_EXP__ >= __FLT32X_MAX_EXP__ ? 1 : -1];
+    } [add_options_for_float32x ""]]
+}
+
 # Add options needed to use the _FloatN / _FloatNx type indicated in
 # the function name.
 
@@ -4128,6 +4299,20 @@ proc check_effective_target_vect_int { } {
 	 || ([istarget loongarch*-*-*]
 	     && [check_effective_target_loongarch_sx])
 	}}]
+}
+
+# Return 1 if the target supports vector integer division, 0 otherwise.
+proc check_effective_target_vect_int_div { } {
+    return [check_effective_target_aarch64_sve]
+}
+
+# Return 1 if the target supports two-way dot products on inpus of hi mode
+# producing si outputs, 0 otherwise.
+
+proc check_effective_target_vect_dotprod_hisi { } {
+    return [check_cached_effective_target_indexed aarch64_sme2 {
+	expr { [check_effective_target_aarch64_sme2]
+    }}]
 }
 
 # Return 1 if the target supports vectorization of early breaks,
@@ -4766,6 +4951,41 @@ proc add_options_for_arm_fp { flags } {
     }
     global et_arm_fp_flags
     return "$flags $et_arm_fp_flags"
+}
+
+# Some libc headers will only compile correctly if the correct ABI flags
+# are picked for the target environment.  Try to find an ABI setting
+# that works.  Glibc falls into this category.  This test is intended
+# to enable FP as far as possible, so does not try -mfloat-abi=soft.
+proc check_effective_target_arm_libc_fp_abi_ok_nocache { } {
+    global et_arm_libc_fp_abi_flags
+    set et_arm_libc_fp_abi_flags ""
+    if { [check_effective_target_arm32] } {
+	foreach flags {"-mfloat-abi=hard" "-mfloat-abi=softfp"} {
+	    if { [check_no_compiler_messages_nocache arm_libc_fp_abi_ok object {
+		#include <stdint.h>
+	    } "$flags"] } {
+		set et_arm_libc_fp_abi_flags $flags
+		return 1
+	    }
+	}
+    }
+    return 0
+}
+
+proc  check_effective_target_arm_libc_fp_abi_ok { } {
+    return [check_cached_effective_target arm_libc_fp_abi_ok \
+		check_effective_target_arm_libc_fp_abi_ok_nocache]
+}
+
+# Add flags that pick the right ABI for the supported libc headers on
+# this platform.
+proc add_options_for_arm_libc_fp_abi { flags } {
+    if { ! [check_effective_target_arm_libc_fp_abi_ok] } {
+	return "$flags"
+    }
+    global et_arm_libc_fp_abi_flags
+    return "$flags $et_arm_libc_fp_abi_flags"
 }
 
 # Return 1 if this is an ARM target defining __ARM_FP with
@@ -5533,6 +5753,9 @@ proc check_effective_target_arm_fp16_hw { } {
 # Usage: /* { dg-require-effective-target arm_arch_v5_ok } */
 #        /* { dg-add-options arm_arch_v5t } */
 #	 /* { dg-require-effective-target arm_arch_v5t_multilib } */
+
+# This table should only be used to set -march= (and associated
+# flags).  See below for setting -mcpu
 foreach { armfunc armflag armdefs } {
 	v4 "-march=armv4 -marm" __ARM_ARCH_4__
 	v4t "-march=armv4t -mfloat-abi=softfp" __ARM_ARCH_4T__
@@ -5544,7 +5767,6 @@ foreach { armfunc armflag armdefs } {
 	v5te "-march=armv5te+fp -mfloat-abi=softfp" __ARM_ARCH_5TE__
 	v5te_arm "-march=armv5te+fp -marm" "__ARM_ARCH_5TE__ && !__thumb__"
 	v5te_thumb "-march=armv5te+fp -mthumb -mfloat-abi=softfp" "__ARM_ARCH_5TE__ && __thumb__"
-	xscale_arm "-mcpu=xscale -mfloat-abi=soft -marm" "__XSCALE__ && !__thumb__"
 	v6 "-march=armv6+fp -mfloat-abi=softfp" __ARM_ARCH_6__
 	v6_arm "-march=armv6+fp -marm" "__ARM_ARCH_6__ && !__thumb__"
 	v6_thumb "-march=armv6+fp -mthumb -mfloat-abi=softfp" "__ARM_ARCH_6__ && __thumb__"
@@ -5562,10 +5784,14 @@ foreach { armfunc armflag armdefs } {
 	v7r "-march=armv7-r+fp" __ARM_ARCH_7R__
 	v7m "-march=armv7-m -mthumb -mfloat-abi=soft" __ARM_ARCH_7M__
 	v7em "-march=armv7e-m+fp -mthumb" __ARM_ARCH_7EM__
+	v7em_hard "-march=armv7e-m+fp -mfpu=auto -mfloat-abi=hard -mthumb" __ARM_ARCH_7EM__
 	v7ve "-march=armv7ve+fp -marm"
 		"__ARM_ARCH_7A__ && __ARM_FEATURE_IDIV"
+	v7ve_neon "-march=armv7ve+simd -mfpu=auto -mfloat-abi=softfp"
+		  "__ARM_ARCH_7A__ && __ARM_FEATURE_IDIV && __ARM_NEON__"
 	v8a "-march=armv8-a+simd" __ARM_ARCH_8A__
 	v8a_hard "-march=armv8-a+simd -mfpu=auto -mfloat-abi=hard" __ARM_ARCH_8A__
+	v8a_crc_hard "-march=armv8-a+crc+simd -mfpu=auto -mfloat-abi=hard" "__ARM_ARCH_8A__ && __ARM_FEATURE_CRC32"
 	v8_1a "-march=armv8.1-a+simd" __ARM_ARCH_8A__
 	v8_2a "-march=armv8.2-a+simd" __ARM_ARCH_8A__
 	v8r "-march=armv8-r+fp.sp" __ARM_ARCH_8R__
@@ -5587,11 +5813,11 @@ foreach { armfunc armflag armdefs } {
 		{
 		    return 0;
 		}
-	    } "FLAG" ]
+	    } "-mcpu=unset FLAG" ]
 	}
 
 	proc add_options_for_arm_arch_FUNC { flags } {
-	    return "$flags FLAG"
+	    return "$flags -mcpu=unset FLAG"
 	}
 
 	proc check_effective_target_arm_arch_FUNC_link { } {
@@ -5610,6 +5836,68 @@ foreach { armfunc armflag armdefs } {
 		    return 0;
 		}
 	    } [add_options_for_arm_arch_FUNC ""]]
+	}
+    }]
+}
+
+# Creates a series of routines that return 1 if the given CPU
+# can be selected and a routine to give the flags to select that CPU
+# Note: Extra flags may be added to disable options from newer compilers
+# (Thumb in particular - but others may be added in the future).
+# Usage: /* { dg-require-effective-target arm_cpu_xscale_ok } */
+#        /* { dg-add-options arm_cpu_xscale } */
+#	 /* { dg-require-effective-target arm_xscale_multilib } */
+
+# This table should only be used to set -mcpu= (and associated
+# flags).  See above for setting -march=.
+foreach { armfunc armflag armdefs } {
+	    xscale_arm "-mcpu=xscale -mfloat-abi=soft -marm" "__XSCALE__ && !__thumb__"
+	    cortex_a57 "-mcpu=cortex-a57" __ARM_ARCH_8A__
+	    cortex_m0 "-mcpu=cortex-m0 -mfloat-abi=soft -mthumb" "__ARM_ARCH_6M__ && __thumb__"
+	    cortex_m0_small "-mcpu=cortex-m0.small-multiply -mfloat-abi=soft -mthumb" "__ARM_ARCH_6M__ && __thumb__"
+	    cortex_m0plus_small "-mcpu=cortex-m0plus.small-multiply -mfloat-abi=soft -mthumb" "__ARM_ARCH_6M__ && __thumb__"
+	    cortex_m1_small "-mcpu=cortex-m1.small-multiply -mfloat-abi=soft -mthumb" "__ARM_ARCH_6M__ && __thumb__"
+	    cortex_m3 "-mcpu=cortex-m3 -mfloat-abi=soft -mthumb" "__ARM_ARCH_7M__"
+	    cortex_m4 "-mcpu=cortex-m4 -mfpu=auto -mthumb" "__ARM_ARCH_7EM__"
+	    cortex_m4_hard "-mcpu=cortex-m4 -mfpu=auto -mfloat-abi=hard -mthumb" "__ARM_ARCH_7EM__"
+	    cortex_m7 "-mcpu=cortex-m7 -mfpu=auto -mthumb" "__ARM_ARCH_7EM__"
+	    cortex_m23 "-mcpu=cortex-m23 -mfloat-abi=soft -mthumb" "__ARM_ARCH_8M_BASE__  && __thumb__"
+	    cortex_m55 "-mcpu=cortex-m55 -mfpu=auto -mthumb" "__ARM_ARCH_8M_MAIN__  && __thumb__"
+	} {
+    eval [string map [list FUNC $armfunc FLAG $armflag DEFS $armdefs ] {
+	proc check_effective_target_arm_cpu_FUNC_ok { } {
+	    return [check_no_compiler_messages arm_cpu_FUNC_ok assembly {
+		#if !(DEFS)
+		#error !(DEFS)
+		#endif
+		int
+		main (void)
+		{
+		    return 0;
+		}
+	    } "-march=unset FLAG" ]
+	}
+
+	proc add_options_for_arm_cpu_FUNC { flags } {
+	    return "$flags -march=unset FLAG"
+	}
+
+	proc check_effective_target_arm_cpu_FUNC_link { } {
+	    return [check_no_compiler_messages arm_cpu_FUNC_link executable {
+		#include <stdint.h>
+		int dummy;
+		int main (void) { return 0; }
+	    } [add_options_for_arm_cpu_FUNC ""]]
+	}
+
+	proc check_effective_target_arm_cpu_FUNC_multilib { } {
+	    return [check_runtime arm_cpu_FUNC_multilib {
+		int
+		main (void)
+		{
+		    return 0;
+		}
+	    } [add_options_for_arm_cpu_FUNC ""]]
 	}
     }]
 }
@@ -5841,7 +6129,7 @@ proc check_effective_target_arm_pacbti_hw {} {
 	  asm ("autg r12, lr, sp");
 	  asm ("bx lr");
 	}
-    } "-march=armv8.1-m.main+pacbti+fp -mbranch-protection=standard -mthumb -mfloat-abi=hard"]
+    } "-mcpu=unset -march=armv8.1-m.main+pacbti+fp -mbranch-protection=standard -mthumb -mfloat-abi=hard"]
 }
 
 # Return 1 if this compilation turns on string_ops_prefer_neon on.
@@ -7339,7 +7627,7 @@ proc check_effective_target_powerpc_elfv2 { } {
 # Return 1 if this is a PowerPC target supporting -mrop-protect
 
 proc check_effective_target_rop_ok { } {
-    return [check_effective_target_power10_ok] && [check_effective_target_powerpc_elfv2]
+    return [check_effective_target_has_arch_pwr8] && [check_effective_target_powerpc_elfv2]
 }
 
 # The VxWorks SPARC simulator accepts only EM_SPARC executables and
@@ -8199,7 +8487,7 @@ proc check_effective_target_vect_pack_trunc { } {
 
 proc check_effective_target_vect_unpack { } {
     return [check_cached_effective_target_indexed vect_unpack {
-      expr { ([istarget powerpc*-*-*] && ![istarget powerpc-*paired*])
+      expr { [istarget powerpc*-*-*]
 	     || [istarget i?86-*-*] || [istarget x86_64-*-*]
 	     || [istarget ia64-*-*]
 	     || [istarget aarch64*-*-*]
@@ -10508,6 +10796,91 @@ proc check_effective_target_apxf { } {
     } "-mapxf" ]
 }
 
+# Return 1 if avx10.2 instructions can be compiled.
+proc check_effective_target_avx10_2 { } {
+    return [check_no_compiler_messages avx10.2 object {
+	void
+	foo ()
+	{
+	  __asm__ volatile ("vdpphps\t%ymm4, %ymm5, %ymm6");
+	  __asm__ volatile ("vcvthf82ph\t%xmm5, %ymm6");
+	  __asm__ volatile ("vaddnepbf16\t%ymm4, %ymm5, %ymm6");
+	  __asm__ volatile ("vcvtph2ibs\t%ymm5, %ymm6");
+	  __asm__ volatile ("vminmaxpd\t$123, %ymm4, %ymm5, %ymm6");
+	}
+    } "-mavx10.2" ]
+}
+
+# Return 1 if avx10.2-512 instructions can be compiled.
+proc check_effective_target_avx10_2_512 { } {
+    return [check_no_compiler_messages avx10.2-512 object {
+	void
+	foo ()
+	{
+	  __asm__ volatile ("vdpphps\t%zmm4, %zmm5, %zmm6");
+	  __asm__ volatile ("vcvthf82ph\t%ymm5, %zmm6");
+	  __asm__ volatile ("vaddnepbf16\t%zmm4, %zmm5, %zmm6");
+	  __asm__ volatile ("vcvtph2ibs\t%zmm5, %zmm6");
+	  __asm__ volatile ("vminmaxpd\t$123, %zmm4, %zmm5, %zmm6");
+	}
+    } "-mavx10.2-512" ]
+}
+
+# Return 1 if amx-avx512 instructions can be compiled.
+proc check_effective_target_amx_avx512 { } {
+    return [check_no_compiler_messages amx_avx512 object {
+	void
+	foo ()
+	{
+	  __asm__ volatile ("tilemovrow\t%%edx, %%tmm2, %%zmm1" ::);
+	}
+    } "-mamx-avx512" ]
+}
+
+# Return 1 if amx-tf32 instructions can be compiled.
+proc check_effective_target_amx_tf32 { } {
+    return [check_no_compiler_messages amx_tf32 object {
+	void
+	foo ()
+	{
+	  __asm__ volatile ("tmmultf32ps\t%%tmm1, %%tmm2, %%tmm3" ::);
+	}
+    } "-mamx-tf32" ]
+}
+
+# Return 1 if amx-transpose instructions can be compiled.
+proc check_effective_target_amx_transpose { } {
+    return [check_no_compiler_messages amx_transpose object {
+	void
+	foo ()
+	{
+	  __asm__ volatile ("ttransposed\t%%tmm1, %%tmm2" ::);
+	}
+    } "-mamx-transpose" ]
+}
+
+# Return 1 if amx-fp8 instructions can be compiled.
+proc check_effective_target_amx_fp8 { } {
+    return [check_no_compiler_messages amx_fp8 object {
+	void
+	foo ()
+	{
+	    __asm__ volatile ("tdpbf8ps\t%%tmm1, %%tmm2, %%tmm3" ::);
+	}
+    } "-mamx-fp8" ]
+}
+
+# Return 1 if amx-movrs instructions can be compiled.
+proc check_effective_target_amx_movrs { } {
+    return [check_no_compiler_messages amx_movrs object {
+	void
+	foo ()
+	{
+	  __asm__ volatile ("tileloaddrs\t(%%r9), %%tmm3" ::);
+	}
+    } "-mamx-movrs" ]
+}
+
 # Return 1 if sse instructions can be compiled.
 proc check_effective_target_sse { } {
     return [check_no_compiler_messages sse object {
@@ -11572,14 +11945,7 @@ proc check_vect_support_and_set_flags { } {
     global dg-do-what-default
     global EFFECTIVE_TARGETS
 
-    if  [istarget powerpc-*paired*]  {
-	lappend DEFAULT_VECTCFLAGS "-mpaired"
-	if [check_750cl_hw_available] {
-	    set dg-do-what-default run
-	} else {
-	    set dg-do-what-default compile
-	}
-    } elseif [istarget powerpc*-*-*] {
+    if [istarget powerpc*-*-*] {
 	# Skip targets not supporting -maltivec.
 	if ![is-effective-target powerpc_altivec_ok] {
 	    return 0
@@ -11693,12 +12059,16 @@ proc check_vect_support_and_set_flags { } {
 	    if [check_effective_target_riscv_v_misalign_ok] {
 		lappend DEFAULT_VECTCFLAGS "-mno-vector-strict-align"
 	    }
-	} else {
+	} elseif [check_effective_target_riscv_v_ok] {
 	    foreach item [add_options_for_riscv_v ""] {
 		lappend DEFAULT_VECTCFLAGS $item
 	    }
 	    set dg-do-what-default compile
-	}
+	} else {
+	    # Current architecture cannot support vectors (e.g. the
+	    # dependent D extension is missing).
+	    return 0
+        }
     } elseif [istarget loongarch*-*-*] {
       # Set the default vectorization option to "-mlsx" due to the problem
       # of non-aligned memory access when using 256-bit vectorization.
@@ -11770,7 +12140,8 @@ proc check_effective_target_aarch64_tiny { } {
 
 foreach { aarch64_ext } { "fp" "simd" "crypto" "crc" "lse" "dotprod" "sve"
 			  "i8mm" "f32mm" "f64mm" "bf16" "sb" "sve2" "ls64"
-			  "sme" "sme-i16i64" "sme2" } {
+			  "sme" "sme-i16i64" "sme2" "sve-b16b16"
+			  "sme-b16b16" "sme-f16f16" "sme2p1" } {
     eval [string map [list FUNC $aarch64_ext] {
 	proc check_effective_target_aarch64_asm_FUNC_ok { } {
 	  if { [istarget aarch64*-*-*] } {
@@ -11782,6 +12153,16 @@ foreach { aarch64_ext } { "fp" "simd" "crypto" "crc" "lse" "dotprod" "sve"
 	  }
 	}
     }]
+}
+
+proc check_effective_target_aarch64_asm_sve2p1_ok { } {
+    if { [istarget aarch64*-*-*] } {
+	return [check_no_compiler_messages aarch64_sve2p1_assembler object {
+	    __asm__ (".arch_extension sve2p1; ld1w {z0.q},p7/z,[x0]");
+	} "-march=armv8-a+sve2p1"]
+    } else {
+	return 0
+    }
 }
 
 proc check_effective_target_aarch64_small { } {
@@ -12605,7 +12986,7 @@ proc check_effective_target_supports_stack_clash_protection { } {
     if { [istarget x86_64-*-*] || [istarget i?86-*-*]
 	  || [istarget powerpc*-*-*] || [istarget rs6000*-*-*]
 	  || [istarget aarch64*-**] || [istarget s390*-*-*]
-	  || [istarget loongarch64*-**] } {
+	  || [istarget loongarch64*-**] || [istarget riscv64*-**] } {
 	return 1
     }
   return 0
@@ -12626,9 +13007,39 @@ proc check_effective_target_frame_pointer_for_non_leaf { } {
 # most trivial type.
 proc check_effective_target_tail_call { } {
     return [check_no_messages_and_pattern tail_call ",SIBCALL" rtl-expand {
-	__attribute__((__noipa__)) void foo (void) { }
+	__attribute__((__noipa__)) void foo (void);
 	__attribute__((__noipa__)) void bar (void) { foo(); }
     } {-O2 -fdump-rtl-expand-all}] ;# The "SIBCALL" note requires a detailed dump.
+}
+
+# Return 1 if the target can perform musttail optimizations of the
+# most trivial type. This is separate from tail_call because musttail
+# is supported at -O0.
+proc check_effective_target_musttail { } {
+    return [check_no_messages_and_pattern musttail ",SIBCALL" rtl-expand {
+	__attribute__((__noipa__)) void foo (void);
+	__attribute__((__noipa__)) void bar (void) { [[gnu::musttail]] return foo(); }
+    } {-fdump-rtl-expand-all}] ;# The "SIBCALL" note requires a detailed dump.
+}
+
+# Return 1 if the target can perform musttail for externals
+proc check_effective_target_external_musttail { } {
+    return [check_no_messages_and_pattern external_musttail ",SIBCALL" rtl-expand {
+	extern __attribute__((__noipa__)) void foo (void);
+	__attribute__((__noipa__)) void bar (void) { [[gnu::musttail]] return foo(); }
+    } {-fdump-rtl-expand-all}] ;# The "SIBCALL" note requires a detailed dump.
+}
+
+# Return 1 if the target can perform musttail optimizations for structures
+# checking with C++ because the C++ compiler has less tail call ability
+# due to PR115606 on some targets
+proc check_effective_target_struct_musttail { } {
+    return [check_no_messages_and_pattern struct_musttail ",SIBCALL" rtl-expand {
+	// C++
+	struct foo { int a, b; };
+	extern __attribute__((__noipa__)) struct foo foo (void);
+	__attribute__((__noipa__)) struct foo bar (void) { [[gnu::musttail]] return foo(); }
+    } {-fdump-rtl-expand-all}] ;# The "SIBCALL" note requires a detailed dump.
 }
 
 # Return 1 if the target's calling sequence or its ABI
@@ -12662,6 +13073,10 @@ proc check_effective_target_caller_implicit_probes { } {
   # consider the aarch64 as having a caller implicit probe at
   # *(sp + 1k).
   if { [istarget aarch64*-*-*] } {
+	return 1;
+  }
+
+  if { [istarget riscv64*-*-*] } {
 	return 1;
   }
 
@@ -12859,7 +13274,7 @@ proc check_effective_target_arm_v8_1_lob_ok { } {
 		  asm goto ("le lr, %l0" : : : "lr" : loop);
 		  return i != 10;
 		}
-	} "-march=armv8.1-m.main -mthumb" ]
+	} "-mcpu=unset -march=armv8.1-m.main -mthumb" ]
     }
 }
 
@@ -13504,4 +13919,88 @@ proc check_effective_target_heap_trampoline {} {
 	return 1
     }
     return 0
+}
+
+# Return 1 if check-jsonschema is available.
+
+proc check_effective_target_check_jsonschema { } {
+    set result [remote_exec host "check-jsonschema --version"]
+    set status [lindex $result 0]
+    if { $status == 0 } then {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+# Return 1 if nvptx code by default compiles for at least PTX ISA version
+# major.minor.
+
+proc check_nvptx_default_ptx_isa_version_at_least { major minor } {
+    set name nvptx_default_ptx_isa_version_at_least_${major}_${minor}
+
+    set supported_p \
+	[concat \
+	     "((__PTX_ISA_VERSION_MAJOR__ == $major" \
+	     "  && __PTX_ISA_VERSION_MINOR__ >= $minor)" \
+	     " || (__PTX_ISA_VERSION_MAJOR__ > $major))"]
+
+    set src \
+	[list \
+	     "#if $supported_p" \
+	     "#else" \
+	     "#error unsupported" \
+	     "#endif"]
+    set src [join $src "\n"]
+    
+    set res [check_no_compiler_messages $name assembly $src ""]
+
+    return $res
+}
+
+# Return 1 if nvptx code by default compiles for at least PTX ISA version 6.0.
+
+proc check_effective_target_nvptx_default_ptx_isa_version_at_least_6_0 { } {
+    return [check_nvptx_default_ptx_isa_version_at_least 6 0]
+}
+
+# Return 1 if nvptx code with PTX ISA version major.minor or higher can be run.
+
+proc check_nvptx_runtime_ptx_isa_version_at_least { major minor } {
+    set name nvptx_runtime_ptx_isa_version_${major}_${minor}
+
+    set default \
+	[check_nvptx_default_ptx_isa_version_at_least \
+	     ${major} ${minor}]
+
+    if { $default } {
+	set flag ""
+    } else {
+	set flag "-mptx=$major.$minor"
+    }
+
+    set res [check_runtime $name {
+	int main (void) { return 0; }
+    } $flag]
+
+    return $res
+}
+
+# Return 1 if the nvptx runtime environment supports the PTX ISA directive
+# '.alias'.
+
+proc check_effective_target_nvptx_runtime_alias_ptx { } {
+    return [check_nvptx_runtime_ptx_isa_version_at_least 6 3]
+}
+
+# Add options to enable nvptx using the PTX ISA directive '.alias'.
+
+proc add_options_for_nvptx_alias_ptx { flags } {
+    append flags " -malias"
+
+    if { ![check_nvptx_default_ptx_isa_version_at_least 6 3] } {
+	append flags " -mptx=6.3"
+    }
+
+    return $flags
 }

@@ -474,6 +474,9 @@ gimple_build_assign_1 (tree lhs, enum tree_code subcode, tree op1,
         gimple_build_with_ops_stat (GIMPLE_ASSIGN, (unsigned)subcode, num_ops
 				    PASS_MEM_STAT));
   gimple_assign_set_lhs (p, lhs);
+  /* For COND_EXPR, op1 should not be a comparison. */
+  if (op1 && subcode == COND_EXPR)
+    gcc_assert (!COMPARISON_CLASS_P  (op1));
   gimple_assign_set_rhs1 (p, op1);
   if (op2)
     {
@@ -1235,6 +1238,21 @@ gimple_build_omp_scope (gimple_seq body, tree clauses)
   return p;
 }
 
+/* Build a GIMPLE_OMP_DISPATCH statement.
+
+   BODY is the target function call to be dispatched.
+   CLAUSES are any of the OMP dispatch construct's clauses.  */
+
+gimple *
+gimple_build_omp_dispatch (gimple_seq body, tree clauses)
+{
+  gimple *p = gimple_alloc (GIMPLE_OMP_DISPATCH, 0);
+  gimple_omp_dispatch_set_clauses (p, clauses);
+  if (body)
+    gimple_omp_set_body (p, body);
+
+  return p;
+}
 
 /* Build a GIMPLE_OMP_TARGET statement.
 
@@ -1596,12 +1614,22 @@ gimple_call_fnspec (const gcall *stmt)
       && DECL_IS_OPERATOR_DELETE_P (fndecl)
       && DECL_IS_REPLACEABLE_OPERATOR (fndecl)
       && gimple_call_from_new_or_delete (stmt))
-    return ". o ";
+    {
+      if (flag_assume_sane_operators_new_delete)
+	return ".co ";
+      else
+	return ". o ";
+    }
   /* Similarly operator new can be treated as malloc.  */
   if (fndecl
       && DECL_IS_REPLACEABLE_OPERATOR_NEW_P (fndecl)
       && gimple_call_from_new_or_delete (stmt))
-    return "m ";
+    {
+      if (flag_assume_sane_operators_new_delete)
+	return "mC";
+      else
+	return "m ";
+    }
   return "";
 }
 
@@ -2146,6 +2174,11 @@ gimple_copy (gimple *stmt)
 	case GIMPLE_OMP_SCOPE:
 	  t = unshare_expr (gimple_omp_scope_clauses (stmt));
 	  gimple_omp_scope_set_clauses (copy, t);
+	  goto copy_omp_body;
+
+	case GIMPLE_OMP_DISPATCH:
+	  t = unshare_expr (gimple_omp_dispatch_clauses (stmt));
+	  gimple_omp_dispatch_set_clauses (copy, t);
 	  goto copy_omp_body;
 
 	case GIMPLE_OMP_TARGET:
@@ -2944,7 +2977,7 @@ gimple_asm_clobbers_memory_p (const gasm *stmt)
     }
 
   /* Non-empty basic ASM implicitly clobbers memory.  */
-  if (gimple_asm_input_p (stmt) && strlen (gimple_asm_string (stmt)) != 0)
+  if (gimple_asm_basic_p (stmt) && strlen (gimple_asm_string (stmt)) != 0)
     return true;
 
   return false;
@@ -3033,7 +3066,7 @@ nonbarrier_call_p (gimple *call)
 }
 
 /* Callback for walk_stmt_load_store_ops.
- 
+
    Return TRUE if OP will dereference the tree stored in DATA, FALSE
    otherwise.
 

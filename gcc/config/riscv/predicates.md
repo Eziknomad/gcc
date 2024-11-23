@@ -329,7 +329,7 @@
 {
   enum riscv_symbol_type type;
   return (riscv_symbolic_constant_p (op, &type)
-	  && type == SYMBOL_GOT_DISP && !SYMBOL_REF_WEAK (op) && TARGET_PLT);
+	  && type == SYMBOL_GOT_DISP && !SYMBOL_REF_WEAK (op) && flag_plt);
 })
 
 (define_predicate "call_insn_operand"
@@ -528,6 +528,9 @@
   (ior (match_operand 0 "register_operand")
        (match_operand 0 "scratch_operand")))
 
+(define_predicate "maskload_else_operand"
+  (match_operand 0 "scratch_operand"))
+
 (define_predicate "vector_arith_operand"
   (ior (match_operand 0 "register_operand")
        (and (match_code "const_vector")
@@ -568,8 +571,8 @@
 (define_predicate "comparison_except_ltge_operator"
   (match_code "eq,ne,le,leu,gt,gtu"))
 
-(define_predicate "comparison_except_eqge_operator"
-  (match_code "le,leu,gt,gtu,lt,ltu"))
+(define_predicate "comparison_except_ge_operator"
+  (match_code "eq,ne,le,leu,gt,gtu,lt,ltu"))
 
 (define_predicate "ge_operator"
   (match_code "ge,geu"))

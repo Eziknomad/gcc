@@ -37,10 +37,6 @@ enum gimple_code {
 extern const char *const gimple_code_name[];
 extern const unsigned char gimple_rhs_class_table[];
 
-/* Strip the outermost pointer, from tr1/type_traits.  */
-template<typename T> struct remove_pointer { typedef T type; };
-template<typename T> struct remove_pointer<T *> { typedef T type; };
-
 /* Error out if a gimple tuple is addressed incorrectly.  */
 #if defined ENABLE_GIMPLE_CHECKING
 #define gcc_gimple_checking_assert(EXPR) gcc_assert (EXPR)
@@ -72,7 +68,7 @@ GIMPLE_CHECK2(const gimple *gs,
   T ret = dyn_cast <T> (gs);
   if (!ret)
     gimple_check_failed (gs, file, line, fun,
-			 remove_pointer<T>::type::code_, ERROR_MARK);
+			 std::remove_pointer<T>::type::code_, ERROR_MARK);
   return ret;
 }
 template <typename T>
@@ -91,7 +87,7 @@ GIMPLE_CHECK2(gimple *gs,
   T ret = dyn_cast <T> (gs);
   if (!ret)
     gimple_check_failed (gs, file, line, fun,
-			 remove_pointer<T>::type::code_, ERROR_MARK);
+			 std::remove_pointer<T>::type::code_, ERROR_MARK);
   return ret;
 }
 #else  /* not ENABLE_GIMPLE_CHECKING  */
@@ -135,7 +131,7 @@ enum gimple_rhs_class
 
    Keep this list sorted.  */
 enum gf_mask {
-    GF_ASM_INPUT		= 1 << 0,
+    GF_ASM_BASIC		= 1 << 0,
     GF_ASM_VOLATILE		= 1 << 1,
     GF_ASM_INLINE		= 1 << 2,
     GF_CALL_FROM_THUNK		= 1 << 0,
@@ -746,7 +742,7 @@ struct GTY((tag("GSS_OMP_CONTINUE")))
 };
 
 /* GIMPLE_OMP_SINGLE, GIMPLE_OMP_ORDERED, GIMPLE_OMP_TASKGROUP,
-   GIMPLE_OMP_SCAN, GIMPLE_OMP_MASKED, GIMPLE_OMP_SCOPE.  */
+   GIMPLE_OMP_SCAN, GIMPLE_OMP_MASKED, GIMPLE_OMP_SCOPE, GIMPLE_OMP_DISPATCH. */
 
 struct GTY((tag("GSS_OMP_SINGLE_LAYOUT")))
   gimple_statement_omp_single_layout : public gimple_statement_omp
@@ -1595,6 +1591,7 @@ gomp_task *gimple_build_omp_task (gimple_seq, tree, tree, tree, tree,
 gimple *gimple_build_omp_section (gimple_seq);
 gimple *gimple_build_omp_structured_block (gimple_seq);
 gimple *gimple_build_omp_scope (gimple_seq, tree);
+gimple *gimple_build_omp_dispatch (gimple_seq, tree);
 gimple *gimple_build_omp_master (gimple_seq);
 gimple *gimple_build_omp_masked (gimple_seq, tree);
 gimple *gimple_build_omp_taskgroup (gimple_seq, tree);
@@ -1886,6 +1883,7 @@ gimple_has_substatements (gimple *g)
     case GIMPLE_OMP_PARALLEL:
     case GIMPLE_OMP_TASK:
     case GIMPLE_OMP_SCOPE:
+    case GIMPLE_OMP_DISPATCH:
     case GIMPLE_OMP_SECTIONS:
     case GIMPLE_OMP_SINGLE:
     case GIMPLE_OMP_TARGET:
@@ -4227,24 +4225,25 @@ gimple_asm_set_inline (gasm *asm_stmt, bool inline_p)
 }
 
 
-/* If INPUT_P is true, mark asm ASM_STMT as an ASM_INPUT.  */
+/* Mark whether asm ASM_STMT is a basic asm or an extended asm, based on
+   BASIC_P.  */
 
 inline void
-gimple_asm_set_input (gasm *asm_stmt, bool input_p)
+gimple_asm_set_basic (gasm *asm_stmt, bool basic_p)
 {
-  if (input_p)
-    asm_stmt->subcode |= GF_ASM_INPUT;
+  if (basic_p)
+    asm_stmt->subcode |= GF_ASM_BASIC;
   else
-    asm_stmt->subcode &= ~GF_ASM_INPUT;
+    asm_stmt->subcode &= ~GF_ASM_BASIC;
 }
 
 
-/* Return true if asm ASM_STMT is an ASM_INPUT.  */
+/* Return true if asm ASM_STMT is a basic asm rather than an extended asm.  */
 
 inline bool
-gimple_asm_input_p (const gasm *asm_stmt)
+gimple_asm_basic_p (const gasm *asm_stmt)
 {
-  return (asm_stmt->subcode & GF_ASM_INPUT) != 0;
+  return (asm_stmt->subcode & GF_ASM_BASIC) != 0;
 }
 
 
@@ -5437,6 +5436,34 @@ gimple_omp_scope_set_clauses (gimple *gs, tree clauses)
     = clauses;
 }
 
+/* Return the clauses associated with OMP_DISPATCH statement GS.  */
+
+inline tree
+gimple_omp_dispatch_clauses (const gimple *gs)
+{
+  GIMPLE_CHECK (gs, GIMPLE_OMP_DISPATCH);
+  return static_cast<const gimple_statement_omp_single_layout *> (gs)->clauses;
+}
+
+/* Return a pointer to the clauses associated with OMP dispatch statement
+   GS.  */
+
+inline tree *
+gimple_omp_dispatch_clauses_ptr (gimple *gs)
+{
+  GIMPLE_CHECK (gs, GIMPLE_OMP_DISPATCH);
+  return &static_cast<gimple_statement_omp_single_layout *> (gs)->clauses;
+}
+
+/* Set CLAUSES to be the clauses associated with OMP dispatch statement
+   GS.  */
+
+inline void
+gimple_omp_dispatch_set_clauses (gimple *gs, tree clauses)
+{
+  GIMPLE_CHECK (gs, GIMPLE_OMP_DISPATCH);
+  static_cast<gimple_statement_omp_single_layout *> (gs)->clauses = clauses;
+}
 
 /* Return the kind of the OMP_FOR statemement G.  */
 
@@ -6771,6 +6798,7 @@ gimple_return_set_retval (greturn *gs, tree retval)
     case GIMPLE_OMP_TARGET:			\
     case GIMPLE_OMP_TEAMS:			\
     case GIMPLE_OMP_SCOPE:			\
+    case GIMPLE_OMP_DISPATCH:			\
     case GIMPLE_OMP_SECTION:			\
     case GIMPLE_OMP_STRUCTURED_BLOCK:		\
     case GIMPLE_OMP_MASTER:			\

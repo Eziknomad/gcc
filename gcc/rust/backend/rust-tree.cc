@@ -859,19 +859,6 @@ is_empty_class (tree type)
   return CLASSTYPE_EMPTY_P (type);
 }
 
-// forked from gcc/cp/tree.cc array_type_nelts_top
-
-/* Return, as an INTEGER_CST node, the number of elements for TYPE
-   (which is an ARRAY_TYPE).  This counts only elements of the top
-   array.  */
-
-tree
-array_type_nelts_top (tree type)
-{
-  return fold_build2_loc (input_location, PLUS_EXPR, sizetype,
-			  array_type_nelts (type), size_one_node);
-}
-
 // forked from gcc/cp/tree.cc builtin_valid_in_constant_expr_p
 
 /* Test whether DECL is a builtin that may appear in a
@@ -5371,8 +5358,8 @@ c_common_type_for_mode (machine_mode mode, int unsignedp)
   else if (GET_MODE_CLASS (mode) == MODE_VECTOR_BOOL
 	   && valid_vector_subparts_p (GET_MODE_NUNITS (mode)))
     {
-      unsigned int elem_bits
-	= vector_element_size (GET_MODE_PRECISION (mode), GET_MODE_NUNITS (mode));
+      unsigned int elem_bits = vector_element_size (GET_MODE_PRECISION (mode),
+						    GET_MODE_NUNITS (mode));
       tree bool_type = build_nonstandard_boolean_type (elem_bits);
       return build_vector_type_for_mode (bool_type, mode);
     }

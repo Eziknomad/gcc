@@ -75,6 +75,7 @@ selftest::run_tests ()
   opt_suggestions_cc_tests ();
   opts_cc_tests ();
   json_cc_tests ();
+  json_parser_cc_tests ();
   cgraph_cc_tests ();
   optinfo_emit_json_cc_tests ();
   ordered_hash_map_tests_cc_tests ();
@@ -97,13 +98,17 @@ selftest::run_tests ()
   diagnostic_color_cc_tests ();
   diagnostic_show_locus_cc_tests ();
   diagnostic_format_json_cc_tests ();
+  diagnostic_format_sarif_cc_tests ();
   edit_context_cc_tests ();
   fold_const_cc_tests ();
   spellcheck_cc_tests ();
   spellcheck_tree_cc_tests ();
   tree_cfg_cc_tests ();
-  tree_diagnostic_path_cc_tests ();
+  diagnostic_path_cc_tests ();
+  simple_diagnostic_path_cc_tests ();
+  lazy_diagnostic_path_cc_tests ();
   attribs_cc_tests ();
+  opts_diagnostic_cc_tests ();
 
   /* This one relies on most of the above.  */
   function_tests_cc_tests ();

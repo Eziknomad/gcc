@@ -1280,27 +1280,24 @@ expand_builtin_prefetch (tree exp)
      zero (read) and argument 2 (locality) defaults to 3 (high degree of
      locality).  */
   nargs = call_expr_nargs (exp);
-  if (nargs > 1)
-    arg1 = CALL_EXPR_ARG (exp, 1);
-  else
-    arg1 = integer_zero_node;
-  if (nargs > 2)
-    arg2 = CALL_EXPR_ARG (exp, 2);
-  else
-    arg2 = integer_three_node;
+  arg1 = nargs > 1 ? CALL_EXPR_ARG (exp, 1) : NULL_TREE;
+  arg2 = nargs > 2 ? CALL_EXPR_ARG (exp, 2) : NULL_TREE;
 
   /* Argument 0 is an address.  */
   op0 = expand_expr (arg0, NULL_RTX, Pmode, EXPAND_NORMAL);
 
   /* Argument 1 (read/write flag) must be a compile-time constant int.  */
-  if (TREE_CODE (arg1) != INTEGER_CST)
+  if (arg1 == NULL_TREE)
+    op1 = const0_rtx;
+  else if (TREE_CODE (arg1) != INTEGER_CST)
     {
       error ("second argument to %<__builtin_prefetch%> must be a constant");
-      arg1 = integer_zero_node;
+      op1 = const0_rtx;
     }
-  op1 = expand_normal (arg1);
-  /* Argument 1 must be either zero or one.  */
-  if (INTVAL (op1) != 0 && INTVAL (op1) != 1)
+  else
+    op1 = expand_normal (arg1);
+  /* Argument 1 must be 0, 1 or 2.  */
+  if (!IN_RANGE (INTVAL (op1), 0, 2))
     {
       warning (0, "invalid second argument to %<__builtin_prefetch%>;"
 	       " using zero");
@@ -1308,14 +1305,17 @@ expand_builtin_prefetch (tree exp)
     }
 
   /* Argument 2 (locality) must be a compile-time constant int.  */
-  if (TREE_CODE (arg2) != INTEGER_CST)
+  if (arg2 == NULL_TREE)
+    op2 = GEN_INT (3);
+  else if (TREE_CODE (arg2) != INTEGER_CST)
     {
       error ("third argument to %<__builtin_prefetch%> must be a constant");
-      arg2 = integer_zero_node;
+      op2 = const0_rtx;
     }
-  op2 = expand_normal (arg2);
+  else
+    op2 = expand_normal (arg2);
   /* Argument 2 must be 0, 1, 2, or 3.  */
-  if (INTVAL (op2) < 0 || INTVAL (op2) > 3)
+  if (!IN_RANGE (INTVAL (op2), 0, 3))
     {
       warning (0, "invalid third argument to %<__builtin_prefetch%>; using zero");
       op2 = const0_rtx;
@@ -2459,8 +2459,12 @@ interclass_mathfn_icode (tree arg, tree fndecl)
       errno_set = true; builtin_optab = ilogb_optab; break;
     CASE_FLT_FN (BUILT_IN_ISINF):
       builtin_optab = isinf_optab; break;
-    case BUILT_IN_ISNORMAL:
     case BUILT_IN_ISFINITE:
+      builtin_optab = isfinite_optab;
+      break;
+    case BUILT_IN_ISNORMAL:
+      builtin_optab = isnormal_optab;
+      break;
     CASE_FLT_FN (BUILT_IN_FINITE):
     case BUILT_IN_FINITED32:
     case BUILT_IN_FINITED64:
@@ -2835,9 +2839,7 @@ expand_builtin_issignaling (tree exp, rtx target)
 	     it is, working on the DImode high part is usually better.  */
 	  if (!MEM_P (temp))
 	    {
-	      if (rtx t = simplify_gen_subreg (imode, temp, fmode,
-					       subreg_highpart_offset (imode,
-								       fmode)))
+	      if (rtx t = force_highpart_subreg (imode, temp, fmode))
 		hi = t;
 	      else
 		{
@@ -2845,9 +2847,7 @@ expand_builtin_issignaling (tree exp, rtx target)
 		  if (int_mode_for_mode (fmode).exists (&imode2))
 		    {
 		      rtx temp2 = gen_lowpart (imode2, temp);
-		      poly_uint64 off = subreg_highpart_offset (imode, imode2);
-		      if (rtx t = simplify_gen_subreg (imode, temp2,
-						       imode2, off))
+		      if (rtx t = force_highpart_subreg (imode, temp2, imode2))
 			hi = t;
 		    }
 		}
@@ -2938,22 +2938,16 @@ expand_builtin_issignaling (tree exp, rtx target)
 	   it is, working on DImode parts is usually better.  */
 	if (!MEM_P (temp))
 	  {
-	    hi = simplify_gen_subreg (imode, temp, fmode,
-				      subreg_highpart_offset (imode, fmode));
-	    lo = simplify_gen_subreg (imode, temp, fmode,
-				      subreg_lowpart_offset (imode, fmode));
+	    hi = force_highpart_subreg (imode, temp, fmode);
+	    lo = force_lowpart_subreg (imode, temp, fmode);
 	    if (!hi || !lo)
 	      {
 		scalar_int_mode imode2;
 		if (int_mode_for_mode (fmode).exists (&imode2))
 		  {
 		    rtx temp2 = gen_lowpart (imode2, temp);
-		    hi = simplify_gen_subreg (imode, temp2, imode2,
-					      subreg_highpart_offset (imode,
-								      imode2));
-		    lo = simplify_gen_subreg (imode, temp2, imode2,
-					      subreg_lowpart_offset (imode,
-								     imode2));
+		    hi = force_highpart_subreg (imode, temp2, imode2);
+		    lo = force_lowpart_subreg (imode, temp2, imode2);
 		  }
 	      }
 	    if (!hi || !lo)
@@ -3543,7 +3537,7 @@ builtin_memcpy_read_str (void *data, void *, HOST_WIDE_INT offset,
 }
 
 /* LEN specify length of the block of memcpy/memset operation.
-   Figure out its range and put it into MIN_SIZE/MAX_SIZE. 
+   Figure out its range and put it into MIN_SIZE/MAX_SIZE.
    In some cases we can make very likely guess on max size, then we
    set it into PROBABLE_MAX_SIZE.  */
 
@@ -6434,7 +6428,7 @@ get_builtin_sync_mem (tree loc, machine_mode mode)
 }
 
 /* Make sure an argument is in the right mode.
-   EXP is the tree argument. 
+   EXP is the tree argument.
    MODE is the mode it should be in.  */
 
 static rtx
@@ -6659,15 +6653,15 @@ expand_builtin_atomic_exchange (machine_mode mode, tree exp, rtx target)
 }
 
 /* Expand the __atomic_compare_exchange intrinsic:
-   	bool __atomic_compare_exchange (TYPE *object, TYPE *expect, 
-					TYPE desired, BOOL weak, 
+   	bool __atomic_compare_exchange (TYPE *object, TYPE *expect,
+					TYPE desired, BOOL weak,
 					enum memmodel success,
 					enum memmodel failure)
    EXP is the CALL_EXPR.
    TARGET is an optional place for us to store the results.  */
 
 static rtx
-expand_builtin_atomic_compare_exchange (machine_mode mode, tree exp, 
+expand_builtin_atomic_compare_exchange (machine_mode mode, tree exp,
 					rtx target)
 {
   rtx expect, desired, mem, oldval;
@@ -6680,14 +6674,14 @@ expand_builtin_atomic_compare_exchange (machine_mode mode, tree exp,
 
   if (failure > success)
     success = MEMMODEL_SEQ_CST;
- 
+
   if (is_mm_release (failure) || is_mm_acq_rel (failure))
     {
       failure = MEMMODEL_SEQ_CST;
       success = MEMMODEL_SEQ_CST;
     }
 
- 
+
   if (!flag_inline_atomics)
     return NULL_RTX;
 
@@ -7166,7 +7160,7 @@ expand_ifn_atomic_op_fetch_cmp_0 (gcall *call)
    EXP is the call expression.  */
 
 static rtx
-expand_builtin_atomic_clear (tree exp) 
+expand_builtin_atomic_clear (tree exp)
 {
   machine_mode mode = int_mode_for_size (BOOL_TYPE_SIZE, 0).require ();
   rtx mem = get_builtin_sync_mem (CALL_EXPR_ARG (exp, 0), mode);
@@ -7278,9 +7272,9 @@ fold_builtin_atomic_always_lock_free (tree arg0, tree arg1)
 
 /* Return true if the parameters to call EXP represent an object which will
    always generate lock free instructions.  The first argument represents the
-   size of the object, and the second parameter is a pointer to the object 
-   itself.  If NULL is passed for the object, then the result is based on 
-   typical alignment for an object of the specified size.  Otherwise return 
+   size of the object, and the second parameter is a pointer to the object
+   itself.  If NULL is passed for the object, then the result is based on
+   typical alignment for an object of the specified size.  Otherwise return
    false.  */
 
 static rtx
@@ -7302,7 +7296,7 @@ expand_builtin_atomic_always_lock_free (tree exp)
   return const0_rtx;
 }
 
-/* Return a one or zero if it can be determined that object ARG1 of size ARG 
+/* Return a one or zero if it can be determined that object ARG1 of size ARG
    is lock free on this architecture.  */
 
 static tree
@@ -7310,7 +7304,7 @@ fold_builtin_atomic_is_lock_free (tree arg0, tree arg1)
 {
   if (!flag_inline_atomics)
     return NULL_TREE;
-  
+
   /* If it isn't always lock free, don't generate a result.  */
   if (fold_builtin_atomic_always_lock_free (arg0, arg1) == boolean_true_node)
     return boolean_true_node;
@@ -7320,9 +7314,9 @@ fold_builtin_atomic_is_lock_free (tree arg0, tree arg1)
 
 /* Return true if the parameters to call EXP represent an object which will
    always generate lock free instructions.  The first argument represents the
-   size of the object, and the second parameter is a pointer to the object 
-   itself.  If NULL is passed for the object, then the result is based on 
-   typical alignment for an object of the specified size.  Otherwise return 
+   size of the object, and the second parameter is a pointer to the object
+   itself.  If NULL is passed for the object, then the result is based on
+   typical alignment for an object of the specified size.  Otherwise return
    NULL*/
 
 static rtx
@@ -7339,7 +7333,7 @@ expand_builtin_atomic_is_lock_free (tree exp)
     }
 
   if (!flag_inline_atomics)
-    return NULL_RTX; 
+    return NULL_RTX;
 
   /* If the value is known at compile time, return the RTX for it.  */
   size = fold_builtin_atomic_is_lock_free (arg0, arg1);
@@ -7413,7 +7407,7 @@ expand_builtin_set_thread_pointer (tree exp)
     {
       class expand_operand op;
       rtx val = expand_expr (CALL_EXPR_ARG (exp, 0), NULL_RTX,
-			     Pmode, EXPAND_NORMAL);      
+			     Pmode, EXPAND_NORMAL);
       create_input_operand (&op, val, Pmode);
       expand_insn (icode, 1, &op);
       return;
@@ -7529,7 +7523,7 @@ expand_builtin_goacc_parlevel_id_size (tree exp, rtx target, int ignore)
    LENGTH is the number of chars to compare;
    CONST_STR_N indicates which source string is the constant string;
    IS_MEMCMP indicates whether it's a memcmp or strcmp.
-  
+
    to: (assume const_str_n is 2, i.e., arg2 is a constant string)
 
    target = (int) (unsigned char) var_str[0]
@@ -7857,6 +7851,7 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
     case BUILT_IN_FABSD32:
     case BUILT_IN_FABSD64:
     case BUILT_IN_FABSD128:
+    case BUILT_IN_FABSD64X:
       target = expand_builtin_fabs (exp, target, subtarget);
       if (target)
 	return target;
@@ -8574,7 +8569,7 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
       if (!target || !register_operand (target, mode))
 	target = gen_reg_rtx (mode);
 
-      mode = get_builtin_sync_mode 
+      mode = get_builtin_sync_mode
 				(fcode - BUILT_IN_SYNC_BOOL_COMPARE_AND_SWAP_1);
       target = expand_builtin_compare_and_swap (mode, exp, true, target);
       if (target)
@@ -8586,7 +8581,7 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
     case BUILT_IN_SYNC_VAL_COMPARE_AND_SWAP_4:
     case BUILT_IN_SYNC_VAL_COMPARE_AND_SWAP_8:
     case BUILT_IN_SYNC_VAL_COMPARE_AND_SWAP_16:
-      mode = get_builtin_sync_mode 
+      mode = get_builtin_sync_mode
 				(fcode - BUILT_IN_SYNC_VAL_COMPARE_AND_SWAP_1);
       target = expand_builtin_compare_and_swap (mode, exp, false, target);
       if (target)
@@ -8637,7 +8632,7 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
 	unsigned int nargs, z;
 	vec<tree, va_gc> *vec;
 
-	mode = 
+	mode =
 	    get_builtin_sync_mode (fcode - BUILT_IN_ATOMIC_COMPARE_EXCHANGE_1);
 	target = expand_builtin_atomic_compare_exchange (mode, exp, target);
 	if (target)
@@ -8686,7 +8681,7 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
       {
 	enum built_in_function lib;
 	mode = get_builtin_sync_mode (fcode - BUILT_IN_ATOMIC_ADD_FETCH_1);
-	lib = (enum built_in_function)((int)BUILT_IN_ATOMIC_FETCH_ADD_1 + 
+	lib = (enum built_in_function)((int)BUILT_IN_ATOMIC_FETCH_ADD_1 +
 				       (fcode - BUILT_IN_ATOMIC_ADD_FETCH_1));
 	target = expand_builtin_atomic_fetch_op (mode, exp, target, PLUS, true,
 						 ignore, lib);
@@ -8702,7 +8697,7 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
       {
 	enum built_in_function lib;
 	mode = get_builtin_sync_mode (fcode - BUILT_IN_ATOMIC_SUB_FETCH_1);
-	lib = (enum built_in_function)((int)BUILT_IN_ATOMIC_FETCH_SUB_1 + 
+	lib = (enum built_in_function)((int)BUILT_IN_ATOMIC_FETCH_SUB_1 +
 				       (fcode - BUILT_IN_ATOMIC_SUB_FETCH_1));
 	target = expand_builtin_atomic_fetch_op (mode, exp, target, MINUS, true,
 						 ignore, lib);
@@ -8718,7 +8713,7 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
       {
 	enum built_in_function lib;
 	mode = get_builtin_sync_mode (fcode - BUILT_IN_ATOMIC_AND_FETCH_1);
-	lib = (enum built_in_function)((int)BUILT_IN_ATOMIC_FETCH_AND_1 + 
+	lib = (enum built_in_function)((int)BUILT_IN_ATOMIC_FETCH_AND_1 +
 				       (fcode - BUILT_IN_ATOMIC_AND_FETCH_1));
 	target = expand_builtin_atomic_fetch_op (mode, exp, target, AND, true,
 						 ignore, lib);
@@ -8734,7 +8729,7 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
       {
 	enum built_in_function lib;
 	mode = get_builtin_sync_mode (fcode - BUILT_IN_ATOMIC_NAND_FETCH_1);
-	lib = (enum built_in_function)((int)BUILT_IN_ATOMIC_FETCH_NAND_1 + 
+	lib = (enum built_in_function)((int)BUILT_IN_ATOMIC_FETCH_NAND_1 +
 				       (fcode - BUILT_IN_ATOMIC_NAND_FETCH_1));
 	target = expand_builtin_atomic_fetch_op (mode, exp, target, NOT, true,
 						 ignore, lib);
@@ -8750,7 +8745,7 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
       {
 	enum built_in_function lib;
 	mode = get_builtin_sync_mode (fcode - BUILT_IN_ATOMIC_XOR_FETCH_1);
-	lib = (enum built_in_function)((int)BUILT_IN_ATOMIC_FETCH_XOR_1 + 
+	lib = (enum built_in_function)((int)BUILT_IN_ATOMIC_FETCH_XOR_1 +
 				       (fcode - BUILT_IN_ATOMIC_XOR_FETCH_1));
 	target = expand_builtin_atomic_fetch_op (mode, exp, target, XOR, true,
 						 ignore, lib);
@@ -8766,7 +8761,7 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
       {
 	enum built_in_function lib;
 	mode = get_builtin_sync_mode (fcode - BUILT_IN_ATOMIC_OR_FETCH_1);
-	lib = (enum built_in_function)((int)BUILT_IN_ATOMIC_FETCH_OR_1 + 
+	lib = (enum built_in_function)((int)BUILT_IN_ATOMIC_FETCH_OR_1 +
 				       (fcode - BUILT_IN_ATOMIC_OR_FETCH_1));
 	target = expand_builtin_atomic_fetch_op (mode, exp, target, IOR, true,
 						 ignore, lib);
@@ -8785,7 +8780,7 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
       if (target)
 	return target;
       break;
- 
+
     case BUILT_IN_ATOMIC_FETCH_SUB_1:
     case BUILT_IN_ATOMIC_FETCH_SUB_2:
     case BUILT_IN_ATOMIC_FETCH_SUB_4:
@@ -8809,7 +8804,7 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
       if (target)
 	return target;
       break;
-  
+
     case BUILT_IN_ATOMIC_FETCH_NAND_1:
     case BUILT_IN_ATOMIC_FETCH_NAND_2:
     case BUILT_IN_ATOMIC_FETCH_NAND_4:
@@ -8821,7 +8816,7 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
       if (target)
 	return target;
       break;
- 
+
     case BUILT_IN_ATOMIC_FETCH_XOR_1:
     case BUILT_IN_ATOMIC_FETCH_XOR_2:
     case BUILT_IN_ATOMIC_FETCH_XOR_4:
@@ -8833,7 +8828,7 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
       if (target)
 	return target;
       break;
- 
+
     case BUILT_IN_ATOMIC_FETCH_OR_1:
     case BUILT_IN_ATOMIC_FETCH_OR_2:
     case BUILT_IN_ATOMIC_FETCH_OR_4:
@@ -8854,7 +8849,7 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
 
     case BUILT_IN_ATOMIC_CLEAR:
       return expand_builtin_atomic_clear (exp);
- 
+
     case BUILT_IN_ATOMIC_ALWAYS_LOCK_FREE:
       return expand_builtin_atomic_always_lock_free (exp);
 
@@ -9383,7 +9378,8 @@ fold_builtin_fabs (location_t loc, tree arg, tree type)
   return fold_build1_loc (loc, ABS_EXPR, type, arg);
 }
 
-/* Fold a call to abs, labs, llabs or imaxabs with argument ARG.  */
+/* Fold a call to abs, labs, llabs, imaxabs, uabs, ulabs, ullabs or uimaxabs
+   with argument ARG.  */
 
 static tree
 fold_builtin_abs (location_t loc, tree arg, tree type)
@@ -9391,6 +9387,14 @@ fold_builtin_abs (location_t loc, tree arg, tree type)
   if (!validate_arg (arg, INTEGER_TYPE))
     return NULL_TREE;
 
+  if (TYPE_UNSIGNED (type))
+    {
+      if (TYPE_PRECISION (TREE_TYPE (arg))
+	  != TYPE_PRECISION (type)
+	  || TYPE_UNSIGNED (TREE_TYPE (arg)))
+	return NULL_TREE;
+      return fold_build1_loc (loc, ABSU_EXPR, type, arg);
+    }
   arg = fold_convert_loc (loc, type, arg);
   return fold_build1_loc (loc, ABS_EXPR, type, arg);
 }
@@ -10191,7 +10195,9 @@ fold_builtin_bit_query (location_t loc, enum built_in_function fcode,
   tree call = NULL_TREE, tem;
   if (TYPE_PRECISION (arg0_type) == MAX_FIXED_MODE_SIZE
       && (TYPE_PRECISION (arg0_type)
-	  == 2 * TYPE_PRECISION (long_long_unsigned_type_node)))
+	  == 2 * TYPE_PRECISION (long_long_unsigned_type_node))
+      /* If the target supports the optab, then don't do the expansion. */
+      && !direct_internal_fn_supported_p (ifn, arg0_type, OPTIMIZE_FOR_BOTH))
     {
       /* __int128 expansions using up to 2 long long builtins.  */
       arg0 = save_expr (arg0);
@@ -10451,6 +10457,7 @@ fold_builtin_0 (location_t loc, tree fndecl)
     case BUILT_IN_INFD32:
     case BUILT_IN_INFD64:
     case BUILT_IN_INFD128:
+    case BUILT_IN_INFD64X:
       return fold_builtin_inf (loc, type, true);
 
     CASE_FLT_FN (BUILT_IN_HUGE_VAL):
@@ -10513,12 +10520,17 @@ fold_builtin_1 (location_t loc, tree expr, tree fndecl, tree arg0)
     case BUILT_IN_FABSD32:
     case BUILT_IN_FABSD64:
     case BUILT_IN_FABSD128:
+    case BUILT_IN_FABSD64X:
       return fold_builtin_fabs (loc, arg0, type);
 
     case BUILT_IN_ABS:
     case BUILT_IN_LABS:
     case BUILT_IN_LLABS:
     case BUILT_IN_IMAXABS:
+    case BUILT_IN_UABS:
+    case BUILT_IN_ULABS:
+    case BUILT_IN_ULLABS:
+    case BUILT_IN_UIMAXABS:
       return fold_builtin_abs (loc, arg0, type);
 
     CASE_FLT_FN (BUILT_IN_CONJ):
@@ -12584,6 +12596,8 @@ builtin_fnspec (tree callee)
 	 by its first argument.  */
       case BUILT_IN_POSIX_MEMALIGN:
 	return ".cOt";
+      case BUILT_IN_OMP_GET_MAPPED_PTR:
+	return ". R ";
 
       default:
 	return "";

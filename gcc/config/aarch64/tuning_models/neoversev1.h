@@ -126,6 +126,8 @@ static const sve_vec_cost neoversev1_sve_vector_cost =
   8, /* fadda_f64_cost  */
   32, /* gather_load_x32_cost  */
   16, /* gather_load_x64_cost  */
+  96, /* gather_load_x32_init_cost  */
+  32, /* gather_load_x64_init_cost  */
   3 /* scatter_store_elt_cost  */
 };
 
@@ -212,7 +214,7 @@ static const struct tune_params neoversev1_tunings =
     1 /* store_pred.  */
   }, /* memmov_cost.  */
   3, /* issue_rate  */
-  (AARCH64_FUSE_AES_AESMC | AARCH64_FUSE_CMP_BRANCH), /* fusible_ops  */
+  AARCH64_FUSE_BASE, /* fusible_ops  */
   "32:16",	/* function_align.  */
   "4",		/* jump_align.  */
   "32:16",	/* loop_align.  */

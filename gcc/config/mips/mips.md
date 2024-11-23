@@ -993,6 +993,10 @@
 ;; from the same template.
 (define_code_iterator any_shift [ashift ashiftrt lshiftrt])
 
+;; This code iterator allows the three bitwise instructions to be generated
+;; from the same template.
+(define_code_iterator any_bitwise [and ior xor])
+
 ;; This code iterator allows unsigned and signed division to be generated
 ;; from the same template.
 (define_code_iterator any_div [div udiv])
@@ -1245,7 +1249,7 @@
 				 (match_operand:GPR 2 "reg_or_0_operand" "dJ")])
 	    (const_int 0))]
   "ISA_HAS_COND_TRAP && !ISA_HAS_COND_TRAPI"
-  "t%C0\t%z1,%2"
+  "t%C0\t%z1,%z2"
   [(set_attr "type" "trap")])
 
 (define_insn "*conditional_trap<mode>"
@@ -7459,7 +7463,7 @@
 
 ;; MIPS4 Conditional move instructions.
 
-(define_insn "*mov<GPR:mode>_on_<MOVECC:mode>"
+(define_insn "mov<GPR:mode>_on_<MOVECC:mode>"
   [(set (match_operand:GPR 0 "register_operand" "=d,d")
 	(if_then_else:GPR
 	 (match_operator 4 "equality_operator"
@@ -7474,7 +7478,7 @@
   [(set_attr "type" "condmove")
    (set_attr "mode" "<GPR:MODE>")])
 
-(define_insn "*mov<GPR:mode>_on_<MOVECC:mode>_mips16e2"
+(define_insn "mov<GPR:mode>_on_<MOVECC:mode>_mips16e2"
   [(set (match_operand:GPR 0 "register_operand" "=d,d,d,d")
 	(if_then_else:GPR
 	 (match_operator 4 "equality_operator"
@@ -7492,7 +7496,7 @@
    (set_attr "mode" "<GPR:MODE>")
    (set_attr "extended_mips16" "yes")])
 
-(define_insn "*mov<GPR:mode>_on_<GPR2:mode>_ne"
+(define_insn "mov<GPR:mode>_on_<GPR2:mode>_ne"
   [(set (match_operand:GPR 0 "register_operand" "=d,d")
        (if_then_else:GPR
         (match_operand:GPR2 1 "register_operand" "<GPR2:reg>,<GPR2:reg>")
@@ -7505,7 +7509,7 @@
   [(set_attr "type" "condmove")
    (set_attr "mode" "<GPR:MODE>")])
 
-(define_insn "*mov<GPR:mode>_on_<GPR2:mode>_ne_mips16e2"
+(define_insn "mov<GPR:mode>_on_<GPR2:mode>_ne_mips16e2"
   [(set (match_operand:GPR 0 "register_operand" "=d,d,d,d")
 	   (if_then_else:GPR
 		(match_operand:GPR2 1 "register_operand" "<GPR2:reg>,<GPR2:reg>,t,t")

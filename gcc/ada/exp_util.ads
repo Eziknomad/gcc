@@ -31,6 +31,7 @@ with Namet;          use Namet;
 with Rtsfind;        use Rtsfind;
 with Sinfo;          use Sinfo;
 with Sinfo.Nodes;    use Sinfo.Nodes;
+with Snames;         use Snames;
 with Types;          use Types;
 with Uintp;          use Uintp;
 
@@ -181,9 +182,9 @@ package Exp_Util is
    --  N is a node for which atomic synchronization may be required (it is
    --  either an identifier, expanded name, or selected/indexed component or
    --  an explicit dereference). The caller has checked the basic conditions
-   --  (atomic variable appearing and Atomic_Sync not disabled). This function
-   --  checks if atomic synchronization is required and if so sets the flag
-   --  and if appropriate generates a warning (in -gnatw.n mode).
+   --  (atomic variable appearing and Atomic_Synchronization enabled). This
+   --  function checks if atomic synchronization is required and if so sets
+   --  the flag and (in -gnatw.n mode) generates a warning.
 
    procedure Adjust_Condition (N : Node_Id);
    --  The node N is an expression whose root-type is Boolean, and which
@@ -316,10 +317,6 @@ package Exp_Util is
    --  Create the declaration of the procedure which verifies the invariants of
    --  type Typ at runtime. Flag Partial_Invariant should be set when building
    --  the invariant procedure for a private type.
-
-   procedure Build_Procedure_Form (N : Node_Id);
-   --  Create a procedure declaration which emulates the behavior of a function
-   --  that returns an array type, for C-compatible generation.
 
    function Build_Runtime_Call (Loc : Source_Ptr; RE : RE_Id) return Node_Id;
    --  Build an N_Procedure_Call_Statement calling the given runtime entity.
@@ -460,24 +457,14 @@ package Exp_Util is
    --  following functions allow this behavior to be modified.
 
    function Duplicate_Subexpr_No_Checks
-     (Exp           : Node_Id;
-      Name_Req      : Boolean   := False;
-      Renaming_Req  : Boolean   := False;
-      Related_Id    : Entity_Id := Empty;
-      Is_Low_Bound  : Boolean   := False;
-      Is_High_Bound : Boolean   := False) return Node_Id;
+     (Exp          : Node_Id;
+      Name_Req     : Boolean := False;
+      Renaming_Req : Boolean := False) return Node_Id;
    --  Identical in effect to Duplicate_Subexpr, except that Remove_Checks is
    --  called on the result, so that the duplicated expression does not include
    --  checks. This is appropriate for use when Exp, the original expression is
    --  unconditionally elaborated before the duplicated expression, so that
    --  there is no need to repeat any checks.
-   --
-   --  Related_Id denotes the entity of the context where Expr appears. Flags
-   --  Is_Low_Bound and Is_High_Bound specify whether the expression to check
-   --  is the low or the high bound of a range. These three optional arguments
-   --  signal Remove_Side_Effects to create an external symbol of the form
-   --  Chars (Related_Id)_FIRST/_LAST. For suggested use of these parameters
-   --  see the warning in the body of Sem_Ch3.Process_Range_Expr_In_Decl.
 
    function Duplicate_Subexpr_Move_Checks
      (Exp          : Node_Id;
@@ -577,12 +564,15 @@ package Exp_Util is
    function Find_Last_Init (Decl : Node_Id) return Node_Id;
    --  Find the last initialization call related to object declaration Decl
 
-   function Find_Prim_Op (T : Entity_Id; Name : Name_Id) return Entity_Id;
-   --  Find the first primitive operation of a tagged type T with name Name.
-   --  This function allows the use of a primitive operation which is not
-   --  directly visible. If T is a class-wide type, then the reference is to an
-   --  operation of the corresponding root type. It is an error if no primitive
-   --  operation with the given name is found.
+   function Find_Prim_Op (T : Entity_Id; Name : Name_Id) return Entity_Id
+     with Pre => Name not in Name_Adjust | Name_Finalize | Name_Initialize;
+   --  Find the first primitive operation of type T with the specified Name,
+   --  disregarding any visibility considerations. If T is a class-wide type,
+   --  then examine the primitive operations of its corresponding root type.
+   --  This function should not be called for the three controlled primitive
+   --  operations, and, instead, Find_Controlled_Prim_Op must be called for
+   --  those. Raise Program_Error if no primitive operation with the given
+   --  Name is found.
 
    function Find_Prim_Op
      (T    : Entity_Id;
@@ -590,6 +580,12 @@ package Exp_Util is
    --  Same as Find_Prim_Op above, except we're searching for an op that has
    --  the form indicated by Name (i.e. is a type support subprogram with the
    --  indicated suffix).
+
+   function Find_Controlled_Prim_Op
+     (T : Entity_Id; Name : Name_Id) return Entity_Id
+     with Pre => Name in Name_Adjust | Name_Finalize | Name_Initialize;
+   --  Same as Find_Prim_Op but for the three controlled primitive operations,
+   --  and returns Empty if not found.
 
    function Find_Optional_Prim_Op
      (T : Entity_Id; Name : Name_Id) return Entity_Id;
@@ -763,6 +759,15 @@ package Exp_Util is
    --    Rnn : constant Ann := Func (...)'reference;
    --    Rnn.all
 
+   function Is_Conversion_Or_Reference_To_Formal (N : Node_Id) return Boolean;
+   --  Return True if N is a type conversion, or a dereference thereof, or a
+   --  reference to a formal parameter.
+
+   function Is_Expanded_Class_Wide_Interface_Object_Decl
+      (N : Node_Id) return Boolean;
+   --  Determine if N is the expanded code for a class-wide interface type
+   --  object declaration.
+
    function Is_Finalizable_Transient
      (Decl : Node_Id;
       N    : Node_Id) return Boolean;
@@ -783,6 +788,11 @@ package Exp_Util is
    function Is_Library_Level_Tagged_Type (Typ : Entity_Id) return Boolean;
    --  Return True if Typ is a library level tagged type. Currently we use
    --  this information to build statically allocated dispatch tables.
+
+   function Is_LSP_Wrapper (E : Entity_Id) return Boolean;
+   --  Return True if E is a wrapper built when a subprogram has class-wide
+   --  preconditions or postconditions affected by overriding (AI12-0195).
+   --  LSP stands for Liskov Substitution Principle.
 
    function Is_Non_BIP_Func_Call (Expr : Node_Id) return Boolean;
    --  Determine whether node Expr denotes a non build-in-place function call
@@ -1000,6 +1010,13 @@ package Exp_Util is
    --  temporaries that interfere with stack checking mechanism. Note that the
    --  caller has to check whether stack checking is actually enabled in order
    --  to guide the expansion (typically of a function call).
+
+   function Name_Of_Controlled_Prim_Op
+     (Typ : Entity_Id;
+      Nam : Name_Id) return Name_Id
+     with Pre => Nam in Name_Adjust | Name_Finalize | Name_Initialize;
+   --  Return the name of the Adjust, Finalize, or Initialize primitive of
+   --  controlled type Typ, if it exists, and No_Name if it does not.
 
    function Needs_Conditional_Null_Excluding_Check
      (Typ : Entity_Id) return Boolean;
@@ -1243,6 +1260,11 @@ package Exp_Util is
 
    --  WARNING: There is a matching C declaration of this subprogram in fe.h
 
+   function Try_Inline_Always (Subp : Entity_Id) return Boolean;
+   --  Determines if the backend should try hard to inline Subp. This is
+   --  similar to Subp having a pragma Inline_Always, but doesn't cause an
+   --  error if Subp can't actually be inlined.
+
    function Type_May_Have_Bit_Aligned_Components
      (Typ : Entity_Id) return Boolean;
    --  Determines if Typ is a composite type that has within it (looking down
@@ -1261,14 +1283,16 @@ package Exp_Util is
    --  when elaborating a contract for a subprogram, and when freezing a type
    --  extension to verify legality rules on inherited conditions.
 
-   function Within_Case_Or_If_Expression (N : Node_Id) return Boolean;
+   function Within_Conditional_Expression (N : Node_Id) return Boolean;
    --  Determine whether arbitrary node N is immediately within a dependent
-   --  expression of a case or an if expression. The criterion is whether
+   --  expression of a conditional expression. The criterion is whether
    --  temporaries created by the actions attached to N need to outlive an
-   --  enclosing case or if expression.
+   --  enclosing conditional expression.
 
 private
    pragma Inline (Duplicate_Subexpr);
+   pragma Inline (Find_Controlled_Prim_Op);
+   pragma Inline (Find_Prim_Op);
    pragma Inline (Force_Evaluation);
    pragma Inline (Get_Mapped_Entity);
    pragma Inline (Is_Library_Level_Tagged_Type);

@@ -1,3 +1,80 @@
+2024-11-18  David Malcolm  <dmalcolm@redhat.com>
+
+	PR other/96032
+	* regenerate-sarif-spec-index.py: New file.
+
+2024-11-17  Jason Merrill  <jason@redhat.com>
+
+	PR libstdc++/106852
+	* relpath.sh: New file.
+
+2024-11-14  Jeff Law  <jlaw@ventanamicro.com>
+
+	* gcc-changelog/git_update_version.py (ignored_commits): Add
+	another ignored commit.
+
+2024-11-14  Jeff Law  <jlaw@ventanamicro.com>
+
+	* gcc-changelog/git_update_version.py (ignored_commits): Add 2
+	further commits.
+
+2024-11-09  Jakub Jelinek  <jakub@redhat.com>
+
+	* gcc-changelog/git_update_version.py (ignored_commits): Add 2
+	further commits.
+
+2024-11-09  Andi Kleen  <ak@gcc.gnu.org>
+
+	* gen_autofdo_event.py: Convert strings to raw.
+	Add fallback to using builtin perf event list.
+
+2024-10-09  René Rebe  <rene@exactcode.de>
+
+	* config-list.mk (LIST): no --enable-obsolete for ia64-linux.
+
+2024-10-08  Jakub Jelinek  <jakub@redhat.com>
+
+	* unicode/README: Update glibc git commit hash, replace
+	Unicode 15 or 15.1 versions with 16.
+	* unicode/gen_libstdcxx_unicode_data.py: Use 160000 instead of
+	150100 in _GLIBCXX_GET_UNICODE_DATA test.
+	* unicode/from_glibc/utf8_gen.py: Updated from glibc
+	064c708c78cc2a6b5802dce73108fc0c1c6bfc80 commit.
+	* unicode/DerivedCoreProperties.txt: Updated from Unicode 16.0.
+	* unicode/emoji-data.txt: Likewise.
+	* unicode/PropList.txt: Likewise.
+	* unicode/GraphemeBreakProperty.txt: Likewise.
+	* unicode/DerivedNormalizationProps.txt: Likewise.
+	* unicode/NameAliases.txt: Likewise.
+	* unicode/UnicodeData.txt: Likewise.
+	* unicode/EastAsianWidth.txt: Likewise.
+
+2024-09-18  Filip Kastl  <fkastl@suse.cz>
+
+	* check-params-in-docs.py: Skip tables of values of a param.
+	Remove code that skips items beginning with a number.
+
+2024-08-01  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* gcc_update (files_and_dependencies): Update for
+	'libformat_parser' in libgrust.
+
+2024-07-19  Richard Biener  <rguenther@suse.de>
+
+	* gcc-changelog/git_update_version.py: Remove gcc-11 branch.
+
+2024-07-13  Richard Sandiford  <richard.sandiford@arm.com>
+
+	* check-MAINTAINERS.py (sort_by_surname): Replace with...
+	(get_surname): ...this.
+	(has_tab, is_empty): Delete.
+	(check_group): Take a list of column positions as argument.
+	Check that lines conform to these column numbers.  Check that the
+	final column is an email in angle brackets.  Record surnames on
+	the fly.
+	(top level): Reject tabs.  Use paragraph counts to identify which
+	groups of lines should be checked.  Report missing sections.
+
 2024-06-05  Robin Dapp  <rdapp@ventanamicro.com>
 
 	* check_GNU_style_lib.py: Use raw strings for regexps.

@@ -34,8 +34,8 @@ Target RejectNegative Joined UInteger Var(riscv_branch_cost)
 -mbranch-cost=N	Set the cost of branches to roughly N instructions.
 
 mplt
-Target Var(TARGET_PLT) Init(1)
-When generating -fpic code, allow the use of PLTs. Ignored for fno-pic.
+Target Alias(fplt)
+This option is deprecated; use -fplt or -fno-plt instead.
 
 mabi=
 Target RejectNegative Joined Enum(abi_type) Var(riscv_abi) Init(ABI_ILP32) Negative(mabi=)
@@ -82,7 +82,7 @@ Target Mask(DIV)
 Use hardware instructions for integer division.
 
 march=
-Target RejectNegative Joined Negative(march=)
+Target RejectNegative Joined Negative(march=) Var(riscv_arch_string) Save
 -march=	Generate code for given RISC-V ISA (e.g. RV64IM).  ISA strings must be
 lower-case.
 
@@ -262,6 +262,10 @@ Mask(ZAAMO)  Var(riscv_za_subext)
 
 Mask(ZALRSC) Var(riscv_za_subext)
 
+Mask(ZABHA) Var(riscv_za_subext)
+
+Mask(ZACAS) Var(riscv_za_subext)
+
 Mask(ZA64RS)  Var(riscv_za_subext)
 
 Mask(ZA128RS) Var(riscv_za_subext)
@@ -403,6 +407,13 @@ Mask(ZICBOP) Var(riscv_zicmo_subext)
 Mask(ZIC64B) Var(riscv_zicmo_subext)
 
 TargetVariable
+int riscv_mop_subext
+
+Mask(ZIMOP) Var(riscv_mop_subext)
+
+Mask(ZCMOP) Var(riscv_mop_subext)
+
+TargetVariable
 int riscv_zf_subext
 
 Mask(ZFBFMIN)  Var(riscv_zf_subext)
@@ -504,6 +515,22 @@ TargetVariable
 int riscv_xventana_subext
 
 Mask(XVENTANACONDOPS) Var(riscv_xventana_subext)
+
+TargetVariable
+int riscv_sifive_subext
+
+Mask(XSFVCP) Var(riscv_sifive_subext)
+
+Mask(XSFCEASE) Var(riscv_sifive_subext)
+
+Mask(XSFVQMACCQOQ) Var(riscv_sifive_subext)
+
+Mask(XSFVQMACCDOD) Var(riscv_sifive_subext)
+
+Mask(XSFVFNRCLIPXFQF) Var(riscv_sifive_subext)
+
+TargetVariable
+int riscv_fmv_priority = 0
 
 Enum
 Name(isa_spec_class) Type(enum riscv_isa_spec_class)
@@ -640,3 +667,7 @@ Specify TLS dialect.
 mfence-tso
 Target Var(TARGET_FENCE_TSO) Init(1)
 Specifies whether the fence.tso instruction should be used.
+
+mautovec-segment
+Target Integer Var(riscv_mautovec_segment) Init(1)
+Enable (default) or disable generation of vector segment load/store instructions.

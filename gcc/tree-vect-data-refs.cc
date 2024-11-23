@@ -54,13 +54,18 @@ along with GCC; see the file COPYING3.  If not see
 #include "vec-perm-indices.h"
 #include "internal-fn.h"
 #include "gimple-fold.h"
+#include "optabs-query.h"
 
 /* Return true if load- or store-lanes optab OPTAB is implemented for
-   COUNT vectors of type VECTYPE.  NAME is the name of OPTAB.  */
+   COUNT vectors of type VECTYPE.  NAME is the name of OPTAB.
+
+   If it is implemented and ELSVALS is nonzero store the possible else
+   values in the vector it points to.  */
 
 static bool
 vect_lanes_optab_supported_p (const char *name, convert_optab optab,
-			      tree vectype, unsigned HOST_WIDE_INT count)
+			      tree vectype, unsigned HOST_WIDE_INT count,
+			      vec<int> *elsvals = nullptr)
 {
   machine_mode mode, array_mode;
   bool limit_p;
@@ -80,7 +85,9 @@ vect_lanes_optab_supported_p (const char *name, convert_optab optab,
 	}
     }
 
-  if (convert_optab_handler (optab, array_mode, mode) == CODE_FOR_nothing)
+  enum insn_code icode;
+  if ((icode = convert_optab_handler (optab, array_mode, mode))
+      == CODE_FOR_nothing)
     {
       if (dump_enabled_p ())
 	dump_printf_loc (MSG_MISSED_OPTIMIZATION, vect_location,
@@ -91,8 +98,13 @@ vect_lanes_optab_supported_p (const char *name, convert_optab optab,
 
   if (dump_enabled_p ())
     dump_printf_loc (MSG_NOTE, vect_location,
-                     "can use %s<%s><%s>\n", name, GET_MODE_NAME (array_mode),
-                     GET_MODE_NAME (mode));
+		     "can use %s<%s><%s>\n", name, GET_MODE_NAME (array_mode),
+		     GET_MODE_NAME (mode));
+
+  if (elsvals)
+    get_supported_else_vals (icode,
+			     internal_fn_else_index (IFN_MASK_LEN_LOAD_LANES),
+			     *elsvals);
 
   return true;
 }
@@ -162,7 +174,10 @@ vect_get_smallest_scalar_type (stmt_vec_info stmt_info, tree scalar_type)
       if (gimple_assign_cast_p (assign)
 	  || gimple_assign_rhs_code (assign) == DOT_PROD_EXPR
 	  || gimple_assign_rhs_code (assign) == WIDEN_SUM_EXPR
+	  || gimple_assign_rhs_code (assign) == SAD_EXPR
 	  || gimple_assign_rhs_code (assign) == WIDEN_MULT_EXPR
+	  || gimple_assign_rhs_code (assign) == WIDEN_MULT_PLUS_EXPR
+	  || gimple_assign_rhs_code (assign) == WIDEN_MULT_MINUS_EXPR
 	  || gimple_assign_rhs_code (assign) == WIDEN_LSHIFT_EXPR
 	  || gimple_assign_rhs_code (assign) == FLOAT_EXPR)
 	{
@@ -1041,6 +1056,8 @@ vect_slp_analyze_load_dependences (vec_info *vinfo, slp_tree node,
 
   for (unsigned k = 0; k < SLP_TREE_SCALAR_STMTS (node).length (); ++k)
     {
+      if (! SLP_TREE_SCALAR_STMTS (node)[k])
+	continue;
       stmt_vec_info access_info
 	= vect_orig_stmt (SLP_TREE_SCALAR_STMTS (node)[k]);
       if (access_info == first_access_info)
@@ -1356,42 +1373,43 @@ vect_compute_data_ref_alignment (vec_info *vinfo, dr_vec_info *dr_info,
       step_preserves_misalignment_p = true;
     }
 
-  /* In case the dataref is in an inner-loop of the loop that is being
-     vectorized (LOOP), we use the base and misalignment information
-     relative to the outer-loop (LOOP).  This is ok only if the misalignment
-     stays the same throughout the execution of the inner-loop, which is why
-     we have to check that the stride of the dataref in the inner-loop evenly
-     divides by the vector alignment.  */
-  else if (nested_in_vect_loop_p (loop, stmt_info))
-    {
-      step_preserves_misalignment_p
-	= (DR_STEP_ALIGNMENT (dr_info->dr) % vect_align_c) == 0;
-
-      if (dump_enabled_p ())
-	{
-	  if (step_preserves_misalignment_p)
-	    dump_printf_loc (MSG_NOTE, vect_location,
-			     "inner step divides the vector alignment.\n");
-	  else
-	    dump_printf_loc (MSG_MISSED_OPTIMIZATION, vect_location,
-			     "inner step doesn't divide the vector"
-			     " alignment.\n");
-	}
-    }
-
-  /* Similarly we can only use base and misalignment information relative to
-     an innermost loop if the misalignment stays the same throughout the
-     execution of the loop.  As above, this is the case if the stride of
-     the dataref evenly divides by the alignment.  */
   else
     {
+      /* We can only use base and misalignment information relative to
+	 an innermost loop if the misalignment stays the same throughout the
+	 execution of the loop.  As above, this is the case if the stride of
+	 the dataref evenly divides by the alignment.  */
       poly_uint64 vf = LOOP_VINFO_VECT_FACTOR (loop_vinfo);
       step_preserves_misalignment_p
-	= multiple_p (DR_STEP_ALIGNMENT (dr_info->dr) * vf, vect_align_c);
+	= multiple_p (drb->step_alignment * vf, vect_align_c);
 
       if (!step_preserves_misalignment_p && dump_enabled_p ())
 	dump_printf_loc (MSG_MISSED_OPTIMIZATION, vect_location,
 			 "step doesn't divide the vector alignment.\n");
+
+      /* In case the dataref is in an inner-loop of the loop that is being
+	 vectorized (LOOP), we use the base and misalignment information
+	 relative to the outer-loop (LOOP).  This is ok only if the
+	 misalignment stays the same throughout the execution of the
+	 inner-loop, which is why we have to check that the stride of the
+	 dataref in the inner-loop evenly divides by the vector alignment.  */
+      if (step_preserves_misalignment_p
+	  && nested_in_vect_loop_p (loop, stmt_info))
+	{
+	  step_preserves_misalignment_p
+	    = (DR_STEP_ALIGNMENT (dr_info->dr) % vect_align_c) == 0;
+
+	  if (dump_enabled_p ())
+	    {
+	      if (step_preserves_misalignment_p)
+		dump_printf_loc (MSG_NOTE, vect_location,
+				 "inner step divides the vector alignment.\n");
+	      else
+		dump_printf_loc (MSG_MISSED_OPTIMIZATION, vect_location,
+				 "inner step doesn't divide the vector"
+				 " alignment.\n");
+	    }
+	}
     }
 
   unsigned int base_alignment = drb->base_alignment;
@@ -1710,12 +1728,14 @@ vect_get_data_access_cost (vec_info *vinfo, dr_vec_info *dr_info,
     ncopies = vect_get_num_copies (loop_vinfo, STMT_VINFO_VECTYPE (stmt_info));
 
   if (DR_IS_READ (dr_info->dr))
-    vect_get_load_cost (vinfo, stmt_info, ncopies, alignment_support_scheme,
-			misalignment, true, inside_cost,
-			outside_cost, prologue_cost_vec, body_cost_vec, false);
+    vect_get_load_cost (vinfo, stmt_info, NULL, ncopies,
+			alignment_support_scheme, misalignment, true,
+			inside_cost, outside_cost, prologue_cost_vec,
+			body_cost_vec, false);
   else
-    vect_get_store_cost (vinfo,stmt_info, ncopies, alignment_support_scheme,
-			 misalignment, inside_cost, body_cost_vec);
+    vect_get_store_cost (vinfo,stmt_info, NULL, ncopies,
+			 alignment_support_scheme, misalignment, inside_cost,
+			 body_cost_vec);
 
   if (dump_enabled_p ())
     dump_printf_loc (MSG_NOTE, vect_location,
@@ -3199,6 +3219,7 @@ vect_analyze_data_ref_access (vec_info *vinfo, dr_vec_info *dr_info)
   if (loop_vinfo && integer_zerop (step))
     {
       DR_GROUP_FIRST_ELEMENT (stmt_info) = NULL;
+      DR_GROUP_NEXT_ELEMENT (stmt_info) = NULL;
       if (!nested_in_vect_loop_p (loop, stmt_info))
 	return DR_IS_READ (dr);
       /* Allow references with zero step for outer loops marked
@@ -3218,6 +3239,7 @@ vect_analyze_data_ref_access (vec_info *vinfo, dr_vec_info *dr_info)
       /* Interleaved accesses are not yet supported within outer-loop
         vectorization for references in the inner-loop.  */
       DR_GROUP_FIRST_ELEMENT (stmt_info) = NULL;
+      DR_GROUP_NEXT_ELEMENT (stmt_info) = NULL;
 
       /* For the rest of the analysis we use the outer-loop step.  */
       step = STMT_VINFO_DR_STEP (stmt_info);
@@ -3240,6 +3262,7 @@ vect_analyze_data_ref_access (vec_info *vinfo, dr_vec_info *dr_info)
 	{
 	  /* Mark that it is not interleaving.  */
 	  DR_GROUP_FIRST_ELEMENT (stmt_info) = NULL;
+	  DR_GROUP_NEXT_ELEMENT (stmt_info) = NULL;
 	  return true;
 	}
     }
@@ -3555,12 +3578,15 @@ vect_analyze_data_ref_accesses (vec_info *vinfo,
 	  DR_GROUP_NEXT_ELEMENT (lastinfo) = stmtinfo_b;
 	  lastinfo = stmtinfo_b;
 
-	  STMT_VINFO_SLP_VECT_ONLY (stmtinfo_a)
-	    = !can_group_stmts_p (stmtinfo_a, stmtinfo_b, false);
+	  if (! STMT_VINFO_SLP_VECT_ONLY (stmtinfo_a))
+	    {
+	      STMT_VINFO_SLP_VECT_ONLY (stmtinfo_a)
+		= !can_group_stmts_p (stmtinfo_a, stmtinfo_b, false);
 
-	  if (dump_enabled_p () && STMT_VINFO_SLP_VECT_ONLY (stmtinfo_a))
-	    dump_printf_loc (MSG_NOTE, vect_location,
-			     "Load suitable for SLP vectorization only.\n");
+	      if (dump_enabled_p () && STMT_VINFO_SLP_VECT_ONLY (stmtinfo_a))
+		dump_printf_loc (MSG_NOTE, vect_location,
+				 "Load suitable for SLP vectorization only.\n");
+	    }
 
 	  if (init_b == init_prev
 	      && !to_fixup.add (DR_GROUP_FIRST_ELEMENT (stmtinfo_a))
@@ -3604,7 +3630,11 @@ vect_analyze_data_ref_accesses (vec_info *vinfo,
 	    {
 	      DR_GROUP_NEXT_ELEMENT (g) = DR_GROUP_NEXT_ELEMENT (next);
 	      if (!newgroup)
-		newgroup = next;
+		{
+		  newgroup = next;
+		  STMT_VINFO_SLP_VECT_ONLY (newgroup)
+		    = STMT_VINFO_SLP_VECT_ONLY (grp);
+		}
 	      else
 		DR_GROUP_NEXT_ELEMENT (ng) = next;
 	      ng = next;
@@ -4167,13 +4197,15 @@ vect_prune_runtime_alias_test_list (loop_vec_info loop_vinfo)
    be multiplied *after* it has been converted to address width.
 
    Return true if the function is supported, storing the function id in
-   *IFN_OUT and the vector type for the offset in *OFFSET_VECTYPE_OUT.  */
+   *IFN_OUT and the vector type for the offset in *OFFSET_VECTYPE_OUT.
+
+   If we can use gather and store the possible else values in ELSVALS.  */
 
 bool
 vect_gather_scatter_fn_p (vec_info *vinfo, bool read_p, bool masked_p,
 			  tree vectype, tree memory_type, tree offset_type,
 			  int scale, internal_fn *ifn_out,
-			  tree *offset_vectype_out)
+			  tree *offset_vectype_out, vec<int> *elsvals)
 {
   unsigned int memory_bits = tree_to_uhwi (TYPE_SIZE (memory_type));
   unsigned int element_bits = vector_element_bits (vectype);
@@ -4211,7 +4243,8 @@ vect_gather_scatter_fn_p (vec_info *vinfo, bool read_p, bool masked_p,
 
       /* Test whether the target supports this combination.  */
       if (internal_gather_scatter_fn_supported_p (ifn, vectype, memory_type,
-						  offset_vectype, scale))
+						  offset_vectype, scale,
+						  elsvals))
 	{
 	  *ifn_out = ifn;
 	  *offset_vectype_out = offset_vectype;
@@ -4221,7 +4254,7 @@ vect_gather_scatter_fn_p (vec_info *vinfo, bool read_p, bool masked_p,
 	       && internal_gather_scatter_fn_supported_p (alt_ifn, vectype,
 							  memory_type,
 							  offset_vectype,
-							  scale))
+							  scale, elsvals))
 	{
 	  *ifn_out = alt_ifn;
 	  *offset_vectype_out = offset_vectype;
@@ -4229,7 +4262,8 @@ vect_gather_scatter_fn_p (vec_info *vinfo, bool read_p, bool masked_p,
 	}
       else if (internal_gather_scatter_fn_supported_p (alt_ifn2, vectype,
 						       memory_type,
-						       offset_vectype, scale))
+						       offset_vectype, scale,
+						       elsvals))
 	{
 	  *ifn_out = alt_ifn2;
 	  *offset_vectype_out = offset_vectype;
@@ -4268,11 +4302,13 @@ vect_describe_gather_scatter_call (stmt_vec_info stmt_info,
 }
 
 /* Return true if a non-affine read or write in STMT_INFO is suitable for a
-   gather load or scatter store.  Describe the operation in *INFO if so.  */
+   gather load or scatter store.  Describe the operation in *INFO if so.
+   If it is suitable and ELSVALS is nonzero store the supported else values
+   in the vector it points to.  */
 
 bool
 vect_check_gather_scatter (stmt_vec_info stmt_info, loop_vec_info loop_vinfo,
-			   gather_scatter_info *info)
+			   gather_scatter_info *info, vec<int> *elsvals)
 {
   HOST_WIDE_INT scale = 1;
   poly_int64 pbitpos, pbitsize;
@@ -4297,15 +4333,30 @@ vect_check_gather_scatter (stmt_vec_info stmt_info, loop_vec_info loop_vinfo,
       if (internal_gather_scatter_fn_p (ifn))
 	{
 	  vect_describe_gather_scatter_call (stmt_info, info);
+
+	  /* In pattern recog we simply used a ZERO else value that
+	     we need to correct here.  To that end just re-use the
+	     (already succesful) check if we support a gather IFN
+	     and have it populate the else values.  */
+	  if (DR_IS_READ (dr) && internal_fn_mask_index (ifn) >= 0 && elsvals)
+	    supports_vec_gather_load_p (TYPE_MODE (vectype), elsvals);
 	  return true;
 	}
       masked_p = (ifn == IFN_MASK_LOAD || ifn == IFN_MASK_STORE);
     }
 
+  /* ???  For epilogues we adjust DR_REF to make the following stmt-based
+     analysis work, but this adjustment doesn't work for epilogues of
+     epilogues during transform, so disable gather/scatter in that case.  */
+  if (LOOP_VINFO_EPILOGUE_P (loop_vinfo)
+      && LOOP_VINFO_EPILOGUE_P (LOOP_VINFO_ORIG_LOOP_INFO (loop_vinfo)))
+    return false;
+
   /* True if we should aim to use internal functions rather than
      built-in functions.  */
   bool use_ifn_p = (DR_IS_READ (dr)
-		    ? supports_vec_gather_load_p (TYPE_MODE (vectype))
+		    ? supports_vec_gather_load_p (TYPE_MODE (vectype),
+						  elsvals)
 		    : supports_vec_scatter_store_p (TYPE_MODE (vectype)));
 
   base = DR_REF (dr);
@@ -4462,12 +4513,14 @@ vect_check_gather_scatter (stmt_vec_info stmt_info, loop_vec_info loop_vinfo,
 						masked_p, vectype, memory_type,
 						signed_char_type_node,
 						new_scale, &ifn,
-						&offset_vectype)
+						&offset_vectype,
+						elsvals)
 		  && !vect_gather_scatter_fn_p (loop_vinfo, DR_IS_READ (dr),
 						masked_p, vectype, memory_type,
 						unsigned_char_type_node,
 						new_scale, &ifn,
-						&offset_vectype))
+						&offset_vectype,
+						elsvals))
 		break;
 	      scale = new_scale;
 	      off = op0;
@@ -4490,7 +4543,7 @@ vect_check_gather_scatter (stmt_vec_info stmt_info, loop_vec_info loop_vinfo,
 	      && vect_gather_scatter_fn_p (loop_vinfo, DR_IS_READ (dr),
 					   masked_p, vectype, memory_type,
 					   TREE_TYPE (off), scale, &ifn,
-					   &offset_vectype))
+					   &offset_vectype, elsvals))
 	    break;
 
 	  if (TYPE_PRECISION (TREE_TYPE (op0))
@@ -4544,7 +4597,7 @@ vect_check_gather_scatter (stmt_vec_info stmt_info, loop_vec_info loop_vinfo,
     {
       if (!vect_gather_scatter_fn_p (loop_vinfo, DR_IS_READ (dr), masked_p,
 				     vectype, memory_type, offtype, scale,
-				     &ifn, &offset_vectype))
+				     &ifn, &offset_vectype, elsvals))
 	ifn = IFN_LAST;
       decl = NULL_TREE;
     }
@@ -6381,27 +6434,29 @@ vect_grouped_load_supported (tree vectype, bool single_element_p,
 }
 
 /* Return FN if vec_{masked_,mask_len_}load_lanes is available for COUNT vectors
-   of type VECTYPE.  MASKED_P says whether the masked form is needed.  */
+   of type VECTYPE.  MASKED_P says whether the masked form is needed.
+   If it is available and ELSVALS is nonzero store the possible else values
+   in the vector it points to.  */
 
 internal_fn
 vect_load_lanes_supported (tree vectype, unsigned HOST_WIDE_INT count,
-			   bool masked_p)
+			   bool masked_p, vec<int> *elsvals)
 {
   if (vect_lanes_optab_supported_p ("vec_mask_len_load_lanes",
 				    vec_mask_len_load_lanes_optab, vectype,
-				    count))
+				    count, elsvals))
     return IFN_MASK_LEN_LOAD_LANES;
   else if (masked_p)
     {
       if (vect_lanes_optab_supported_p ("vec_mask_load_lanes",
 					vec_mask_load_lanes_optab, vectype,
-					count))
+					count, elsvals))
 	return IFN_MASK_LOAD_LANES;
     }
   else
     {
       if (vect_lanes_optab_supported_p ("vec_load_lanes", vec_load_lanes_optab,
-					vectype, count))
+					vectype, count, elsvals))
 	return IFN_LOAD_LANES;
     }
   return IFN_LAST;
@@ -7155,7 +7210,7 @@ vect_supportable_dr_alignment (vec_info *vinfo, dr_vec_info *dr_info,
 
   if (DR_IS_READ (dr))
     {
-      if (optab_handler (vec_realign_load_optab, mode) != CODE_FOR_nothing
+      if (can_implement_p (vec_realign_load_optab, mode)
 	  && (!targetm.vectorize.builtin_mask_for_load
 	      || targetm.vectorize.builtin_mask_for_load ()))
 	{
@@ -7163,11 +7218,11 @@ vect_supportable_dr_alignment (vec_info *vinfo, dr_vec_info *dr_info,
 	     same alignment, instead it depends on the SLP group size.  */
 	  if (loop_vinfo
 	      && STMT_SLP_TYPE (stmt_info)
-	      && (!STMT_VINFO_GROUPED_ACCESS (stmt_info)
-		  || !multiple_p (LOOP_VINFO_VECT_FACTOR (loop_vinfo)
-				  * (DR_GROUP_SIZE
-				       (DR_GROUP_FIRST_ELEMENT (stmt_info))),
-				  TYPE_VECTOR_SUBPARTS (vectype))))
+	      && STMT_VINFO_GROUPED_ACCESS (stmt_info)
+	      && !multiple_p (LOOP_VINFO_VECT_FACTOR (loop_vinfo)
+			      * (DR_GROUP_SIZE
+				   (DR_GROUP_FIRST_ELEMENT (stmt_info))),
+			      TYPE_VECTOR_SUBPARTS (vectype)))
 	    ;
 	  else if (!loop_vinfo
 		   || (nested_in_vect_loop

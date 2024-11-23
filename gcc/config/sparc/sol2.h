@@ -377,7 +377,7 @@ extern const char *host_detect_local_cpu (int argc, const char **argv);
 	  && (DECL) && DECL_SIZE (DECL))			\
 	{							\
 	  size_directive_output = 1;				\
-	  size = int_size_in_bytes (TREE_TYPE (DECL));		\
+	  size = tree_to_uhwi (DECL_SIZE_UNIT (DECL));		\
 	  ASM_OUTPUT_SIZE_DIRECTIVE (FILE, NAME, size);		\
 	}							\
 								\
@@ -440,7 +440,7 @@ extern const char *host_detect_local_cpu (int argc, const char **argv);
 
 /* Define for support of TFmode long double.
    SPARC ABI says that long double is 4 words.  */
-#define LONG_DOUBLE_TYPE_SIZE 128
+#define SPARC_LONG_DOUBLE_TYPE_SIZE 128
 
 /* Solaris's _Qp_* library routine implementation clobbers the output
    memory before the inputs are fully consumed.  */

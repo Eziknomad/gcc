@@ -27,6 +27,7 @@ with Accessibility;  use Accessibility;
 with Aspects;        use Aspects;
 with Atree;          use Atree;
 with Debug;          use Debug;
+with Diagnostics.Constructors; use Diagnostics.Constructors;
 with Einfo;          use Einfo;
 with Einfo.Entities; use Einfo.Entities;
 with Einfo.Utils;    use Einfo.Utils;
@@ -269,6 +270,19 @@ package body Sem_Ch4 is
    --  of the new aspect. It is unclear whether a full implementation of
    --  these aspects can be achieved without larger modifications to the
    --  two-pass resolution algorithm.
+
+   function Is_Effectively_Visible_Operator
+     (N : Node_Id; Typ : Entity_Id) return Boolean
+   is (Is_Visible_Operator (N => N, Typ => Typ)
+         or else
+           --  test for a rewritten Foo."+" call
+           (N /= Original_Node (N)
+             and then Is_Effectively_Visible_Operator
+                        (N => Original_Node (N), Typ => Typ))
+         or else Checking_Potentially_Static_Expression
+         or else not Comes_From_Source (N));
+   --  Return True iff either Is_Visible_Operator returns True or if
+   --  there is a reason it is ok for Is_Visible_Operator to return False.
 
    function Possible_Type_For_Conditional_Expression
      (T1, T2 : Entity_Id) return Entity_Id;
@@ -1982,6 +1996,7 @@ package body Sem_Ch4 is
               (Root_Type (LT) = Standard_String
                  or else Scope (LT) /= Standard_Standard)
               and then Etype (R) = Any_String
+              and then not Is_Component_Left_Opnd (N)
             then
                Add_One_Interp (N, Op_Id, LT);
 
@@ -1989,6 +2004,7 @@ package body Sem_Ch4 is
               (Root_Type (RT) = Standard_String
                  or else Scope (RT) /= Standard_Standard)
               and then Etype (L) = Any_String
+              and then not Is_Component_Right_Opnd (N)
             then
                Add_One_Interp (N, Op_Id, RT);
 
@@ -2398,6 +2414,8 @@ package body Sem_Ch4 is
 
          case Nkind (A) is
             when N_Object_Declaration =>
+               Inspect_Deferred_Constant_Completion (A);
+
                if Nkind (Object_Definition (A)) = N_Access_Definition then
                   Error_Msg_N
                     ("anonymous access type not allowed in declare_expression",
@@ -4697,13 +4715,6 @@ package body Sem_Ch4 is
       begin
          if Warn_On_Suspicious_Contract
            and then not Is_Internal_Name (Chars (Loop_Id))
-
-           --  Generating C, this check causes spurious warnings on inlined
-           --  postconditions; we can safely disable it because this check
-           --  was previously performed when analyzing the internally built
-           --  postconditions procedure.
-
-           and then not (Modify_Tree_For_C and In_Inlined_Body)
          then
             if not Referenced (Loop_Id, Cond) then
                Error_Msg_N ("?.t?unused variable &", Loop_Id);
@@ -4915,7 +4926,7 @@ package body Sem_Ch4 is
    --  the selector must denote a visible entry.
 
    procedure Analyze_Selected_Component (N : Node_Id) is
-      Name          : constant Node_Id := Prefix (N);
+      Pref          : constant Node_Id := Prefix (N);
       Sel           : constant Node_Id := Selector_Name (N);
       Act_Decl      : Node_Id;
       Comp          : Entity_Id := Empty;
@@ -4950,8 +4961,11 @@ package body Sem_Ch4 is
       --  indexed component rather than a function call.
 
       function Has_Dereference (Nod : Node_Id) return Boolean;
-      --  Check whether prefix includes a dereference, explicit or implicit,
-      --  at any recursive level.
+      --  Check whether Nod includes a dereference, explicit or implicit, at
+      --  any recursive level.
+
+      function Is_Simple_Indexed_Component (Nod : Node_Id) return Boolean;
+      --  Check whether Nod is a simple indexed component in the context
 
       function Try_By_Protected_Procedure_Prefixed_View return Boolean;
       --  Return True if N is an access attribute whose prefix is a prefixed
@@ -5095,6 +5109,40 @@ package body Sem_Ch4 is
          end if;
       end Has_Dereference;
 
+      ---------------------------------
+      -- Is_Simple_Indexed_Component --
+      ---------------------------------
+
+      function Is_Simple_Indexed_Component (Nod : Node_Id) return Boolean is
+         Expr : Node_Id;
+
+      begin
+         --  Nod must be an indexed component
+
+         if Nkind (Nod) /= N_Indexed_Component then
+            return False;
+         end if;
+
+         --  The context must not be a nested selected component
+
+         if Nkind (Pref) = N_Selected_Component then
+            return False;
+         end if;
+
+         --  The expressions must not be case expressions
+
+         Expr := First (Expressions (Nod));
+         while Present (Expr) loop
+            if Nkind (Expr) = N_Case_Expression then
+               return False;
+            end if;
+
+            Next (Expr);
+         end loop;
+
+         return True;
+      end Is_Simple_Indexed_Component;
+
       ----------------------------------------------
       -- Try_By_Protected_Procedure_Prefixed_View --
       ----------------------------------------------
@@ -5237,22 +5285,6 @@ package body Sem_Ch4 is
             end if;
          end loop;
 
-         --  If Par is a generic actual, look for component in ancestor types.
-         --  Skip this if we have no Declaration_Node, as is the case for
-         --  itypes.
-
-         if Present (Par)
-           and then Is_Generic_Actual_Type (Par)
-           and then Present (Declaration_Node (Par))
-         then
-            Par := Generic_Parent_Type (Declaration_Node (Par));
-            loop
-               Find_Component_In_Instance (Par);
-               exit when Present (Entity (Sel))
-                 or else Par = Etype (Par);
-               Par := Etype (Par);
-            end loop;
-
          --  Another special case: the type is an extension of a private
          --  type T, either is an actual in an instance or is immediately
          --  visible, and we are in the body of the instance, which means
@@ -5263,12 +5295,29 @@ package body Sem_Ch4 is
          --  the Has_Private_View mechanism is bypassed because T or the
          --  ancestor is not directly referenced in the generic body.
 
-         elsif Is_Derived_Type (Typ)
-           and then (Used_As_Generic_Actual (Typ)
+         if Is_Derived_Type (Typ)
+           and then (Used_As_Generic_Actual (Base_Type (Typ))
                       or else Is_Immediately_Visible (Typ))
            and then In_Instance_Body
+           and then Present (Parent_Subtype (Typ))
          then
             Find_Component_In_Instance (Parent_Subtype (Typ));
+
+         --  If Par is a generic actual, look for component in ancestor types.
+         --  Skip this if we have no Declaration_Node, as is the case for
+         --  itypes.
+
+         elsif Present (Par)
+           and then Is_Generic_Actual_Type (Par)
+           and then Present (Declaration_Node (Par))
+         then
+            Par := Generic_Parent_Type (Declaration_Node (Par));
+            loop
+               Find_Component_In_Instance (Par);
+               exit when Present (Entity (Sel))
+                 or else Par = Etype (Par);
+               Par := Etype (Par);
+            end loop;
          end if;
 
          return Etype (N) /= Any_Type;
@@ -5279,17 +5328,17 @@ package body Sem_Ch4 is
    begin
       Set_Etype (N, Any_Type);
 
-      if Is_Overloaded (Name) then
+      if Is_Overloaded (Pref) then
          Analyze_Overloaded_Selected_Component (N);
          return;
 
-      elsif Etype (Name) = Any_Type then
+      elsif Etype (Pref) = Any_Type then
          Set_Entity (Sel, Any_Id);
          Set_Etype (Sel, Any_Type);
          return;
 
       else
-         Prefix_Type := Etype (Name);
+         Prefix_Type := Etype (Pref);
       end if;
 
       if Is_Access_Type (Prefix_Type) then
@@ -5332,8 +5381,8 @@ package body Sem_Ch4 is
       --  component prefixes because of the prefixed dispatching call case.
       --  Note that implicit dereferences are checked for this just above.
 
-      elsif Nkind (Name) = N_Explicit_Dereference
-        and then Is_Remote_Access_To_Class_Wide_Type (Etype (Prefix (Name)))
+      elsif Nkind (Pref) = N_Explicit_Dereference
+        and then Is_Remote_Access_To_Class_Wide_Type (Etype (Prefix (Pref)))
         and then Comes_From_Source (N)
       then
          if Try_Object_Operation (N) then
@@ -5384,7 +5433,7 @@ package body Sem_Ch4 is
         Is_Concurrent_Type (Prefix_Type)
           and then Is_Internal_Name (Chars (Prefix_Type))
           and then not Is_Derived_Type (Prefix_Type)
-          and then Is_Entity_Name (Name);
+          and then Is_Entity_Name (Pref);
 
       --  Avoid initializing Comp if that initialization is not needed
       --  (and, more importantly, if the call to First_Entity could fail).
@@ -5412,8 +5461,8 @@ package body Sem_Ch4 is
          --  subsequent semantic checks might examine the original node.
 
          Set_Entity (Sel, Comp);
-         Rewrite (Selector_Name (N), New_Occurrence_Of (Comp, Sloc (N)));
-         Set_Original_Discriminant (Selector_Name (N), Comp);
+         Rewrite (Sel, New_Occurrence_Of (Comp, Sloc (N)));
+         Set_Original_Discriminant (Sel, Comp);
          Set_Etype (N, Etype (Comp));
          Check_Implicit_Dereference (N, Etype (Comp));
 
@@ -5464,7 +5513,7 @@ package body Sem_Ch4 is
                --  to duplicate this prefix and duplication is only allowed
                --  on fully resolved expressions.
 
-               Resolve (Name);
+               Resolve (Pref);
 
                --  Ada 2005 (AI-50217): Check wrong use of incomplete types or
                --  subtypes in a package specification.
@@ -5477,38 +5526,39 @@ package body Sem_Ch4 is
                --       N : Natural := X.all.Comp;  --  ERROR, limited view
                --    end Pkg;                       --  Comp is not visible
 
-               if Nkind (Name) = N_Explicit_Dereference
-                 and then From_Limited_With (Etype (Prefix (Name)))
-                 and then not Is_Potentially_Use_Visible (Etype (Name))
+               if Nkind (Pref) = N_Explicit_Dereference
+                 and then From_Limited_With (Etype (Prefix (Pref)))
+                 and then not Is_Potentially_Use_Visible (Etype (Pref))
                  and then Nkind (Parent (Cunit_Entity (Current_Sem_Unit))) =
                             N_Package_Specification
                then
                   Error_Msg_NE
-                    ("premature usage of incomplete}", Prefix (Name),
-                     Etype (Prefix (Name)));
+                    ("premature usage of incomplete}", Prefix (Pref),
+                     Etype (Prefix (Pref)));
                end if;
 
-               --  We never need an actual subtype for the case of a selection
-               --  for a indexed component of a non-packed array, since in
-               --  this case gigi generates all the checks and can find the
-               --  necessary bounds information.
+               --  We generally do not need an actual subtype for the case of
+               --  a selection for an indexed component of a non-packed array,
+               --  since, in this case, gigi can find all the necessary bound
+               --  information. However, when the prefix is itself a selected
+               --  component, for example a.b.c (i), gigi may regard a.b.c as
+               --  a dynamic-sized temporary, so we generate an actual subtype
+               --  for this case. Moreover, if the expressions are complex,
+               --  the actual subtype may be needed for constructs generated
+               --  by their analysis.
 
                --  We also do not need an actual subtype for the case of a
                --  first, last, length, or range attribute applied to a
                --  non-packed array, since gigi can again get the bounds in
                --  these cases (gigi cannot handle the packed case, since it
                --  has the bounds of the packed array type, not the original
-               --  bounds of the type). However, if the prefix is itself a
-               --  selected component, as in a.b.c (i), gigi may regard a.b.c
-               --  as a dynamic-sized temporary, so we do generate an actual
-               --  subtype for this case.
+               --  bounds of the type).
 
                Parent_N := Parent (N);
 
                if not Is_Packed (Etype (Comp))
                  and then
-                   ((Nkind (Parent_N) = N_Indexed_Component
-                       and then Nkind (Name) /= N_Selected_Component)
+                   (Is_Simple_Indexed_Component (Parent_N)
                      or else
                       (Nkind (Parent_N) = N_Attribute_Reference
                         and then
@@ -5590,8 +5640,8 @@ package body Sem_Ch4 is
                --  Force the generation of a mutably tagged type conversion
                --  when we encounter a special class-wide equivalent type.
 
-               if Is_Mutably_Tagged_CW_Equivalent_Type (Etype (Name)) then
-                  Make_Mutably_Tagged_Conversion (Name, Force => True);
+               if Is_Mutably_Tagged_CW_Equivalent_Type (Etype (Pref)) then
+                  Make_Mutably_Tagged_Conversion (Pref, Force => True);
                end if;
 
                Check_Implicit_Dereference (N, Etype (N));
@@ -5603,7 +5653,7 @@ package body Sem_Ch4 is
             --  which can appear in expanded code in a tag check.
 
             if Ekind (Type_To_Use) = E_Record_Type_With_Private
-              and then Chars (Selector_Name (N)) /= Name_uTag
+              and then Chars (Sel) /= Name_uTag
             then
                exit when Comp = Last_Entity (Type_To_Use);
             end if;
@@ -5773,7 +5823,7 @@ package body Sem_Ch4 is
                elsif Ekind (Comp) in E_Discriminant | E_Entry_Family
                  or else (In_Scope
                             and then not Is_Protected_Type (Prefix_Type)
-                            and then Is_Entity_Name (Name))
+                            and then Is_Entity_Name (Pref))
                then
                   Set_Entity_With_Checks (Sel, Comp);
                   Generate_Reference (Comp, Sel);
@@ -5843,8 +5893,8 @@ package body Sem_Ch4 is
          --  and the selector is one of the task operations.
 
          if In_Scope
-           and then not Is_Entity_Name (Name)
-           and then not Has_Dereference (Name)
+           and then not Is_Entity_Name (Pref)
+           and then not Has_Dereference (Pref)
          then
             if Is_Task_Type (Prefix_Type)
               and then Present (Entity (Sel))
@@ -5961,7 +6011,7 @@ package body Sem_Ch4 is
 
             if Present (Comp) then
                if Is_Single_Concurrent_Object then
-                  Error_Msg_Node_2 := Entity (Name);
+                  Error_Msg_Node_2 := Entity (Pref);
                   Error_Msg_NE ("invisible selector& for &", N, Sel);
 
                else
@@ -5993,7 +6043,7 @@ package body Sem_Ch4 is
       if Etype (N) = Any_Type then
 
          if Is_Single_Concurrent_Object then
-            Error_Msg_Node_2 := Entity (Name);
+            Error_Msg_Node_2 := Entity (Pref);
             Error_Msg_NE ("no selector& for&", N, Sel);
 
             Check_Misspelled_Selector (Type_To_Use, Sel);
@@ -6438,19 +6488,6 @@ package body Sem_Ch4 is
       Operator_Check (N);
    end Analyze_Unary_Op;
 
-   ----------------------------------
-   -- Analyze_Unchecked_Expression --
-   ----------------------------------
-
-   procedure Analyze_Unchecked_Expression (N : Node_Id) is
-      Expr : constant Node_Id := Expression (N);
-
-   begin
-      Analyze (Expr, Suppress => All_Checks);
-      Set_Etype (N, Etype (Expr));
-      Save_Interps (Expr, N);
-   end Analyze_Unchecked_Expression;
-
    ---------------------------------------
    -- Analyze_Unchecked_Type_Conversion --
    ---------------------------------------
@@ -6640,6 +6677,8 @@ package body Sem_Ch4 is
            and then (Covers (T1 => T1, T2 => T2)
                        or else
                      Covers (T1 => T2, T2 => T1))
+           and then Is_Effectively_Visible_Operator
+                      (N, Specific_Type (T1, T2))
          then
             Add_One_Interp (N, Op_Id, Specific_Type (T1, T2));
          end if;
@@ -6669,6 +6708,8 @@ package body Sem_Ch4 is
            and then (Covers (T1 => T1, T2 => T2)
                        or else
                      Covers (T1 => T2, T2 => T1))
+           and then Is_Effectively_Visible_Operator
+                      (N, Specific_Type (T1, T2))
          then
             Add_One_Interp (N, Op_Id, Specific_Type (T1, T2));
 
@@ -6712,6 +6753,8 @@ package body Sem_Ch4 is
            and then (Covers (T1 => T1, T2 => T2)
                        or else
                      Covers (T1 => T2, T2 => T1))
+           and then Is_Effectively_Visible_Operator
+                      (N, Specific_Type (T1, T2))
          then
             Add_One_Interp (N, Op_Id, Specific_Type (T1, T2));
          end if;
@@ -7085,6 +7128,7 @@ package body Sem_Ch4 is
                T := Any_Modular;
             end if;
 
+            --  test Is_Effectively_Visible_Operator here ???
             Add_One_Interp (N, Op_Id, T);
          end if;
       end Check_Boolean_Pair;
@@ -7398,6 +7442,8 @@ package body Sem_Ch4 is
                then
                   It := Disambiguate (L, Valid_I, I, Any_Type);
 
+                  --  Note the ambiguity for later, see below
+
                   if It = No_Interp then
                      L_Typ := Any_Type;
                      R_Typ := T;
@@ -7414,6 +7460,12 @@ package body Sem_Ch4 is
 
             Get_Next_Interp (I, It);
          end loop;
+
+         --  Record the operator as an interpretation of the operation if we
+         --  have found a valid pair of types for the two operands. If we have
+         --  found more than one such pair and did not manage to disambiguate
+         --  them, record an "ambiguous" operator as the interpretation, that
+         --  Disambiguate in Sem_Type will specifically recognize.
 
          if Present (L_Typ) then
             Set_Etype (L, L_Typ);
@@ -7614,7 +7666,8 @@ package body Sem_Ch4 is
                then
                   null;
 
-               else
+               elsif Is_Effectively_Visible_Operator (N, Base_Type (It.Typ))
+               then
                   Add_One_Interp (N, Op_Id, Base_Type (It.Typ));
                end if;
             end if;
@@ -9444,7 +9497,6 @@ package body Sem_Ch4 is
                Error_Msg_NE
                  ("expect variable in call to&", Prefix (N), Entity (Subprog));
             end if;
-
          --  Conversely, if the formal is an access parameter and the object is
          --  not an access type or a reference type (i.e. a type with the
          --  Implicit_Dereference aspect specified), replace the actual with a
@@ -9514,6 +9566,8 @@ package body Sem_Ch4 is
          end if;
 
          Rewrite (Node_To_Replace, Call_Node);
+
+         Set_Is_Expanded_Prefixed_Call (Node_To_Replace);
 
          --  Propagate the interpretations collected in subprog to the new
          --  function call node, to be resolved from context.
@@ -10680,6 +10734,7 @@ package body Sem_Ch4 is
             Complete_Object_Operation
               (Call_Node       => New_Call_Node,
                Node_To_Replace => Node_To_Replace);
+
             return True;
          end if;
 
@@ -10806,40 +10861,86 @@ package body Sem_Ch4 is
             end loop;
 
             if No (Op_Id) then
-               Error_Msg_N ("invalid operand types for operator&", N);
+               if Debug_Flag_Underscore_DD then
+                  if Nkind (N) /= N_Op_Concat then
+                     if Nkind (N) in N_Op_Multiply | N_Op_Divide
+                       and then Is_Fixed_Point_Type (Etype (L))
+                       and then Is_Integer_Type (Etype (R))
+                     then
+                        Record_Invalid_Operand_Types_For_Operator_R_Int_Error
+                          (Op     => N,
+                           L      => L,
+                           L_Type => Etype (L),
+                           R      => R,
+                           R_Type => Etype (R));
 
-               if Nkind (N) /= N_Op_Concat then
-                  Error_Msg_NE ("\left operand has}!",  N, Etype (L));
-                  Error_Msg_NE ("\right operand has}!", N, Etype (R));
+                     elsif Nkind (N) = N_Op_Multiply
+                       and then Is_Fixed_Point_Type (Etype (R))
+                       and then Is_Integer_Type (Etype (L))
+                     then
+                        Record_Invalid_Operand_Types_For_Operator_L_Int_Error
+                          (Op     => N,
+                           L      => L,
+                           L_Type => Etype (L),
+                           R      => R,
+                           R_Type => Etype (R));
+                     else
+                        Record_Invalid_Operand_Types_For_Operator_Error
+                          (Op     => N,
+                           L      => L,
+                           L_Type => Etype (L),
+                           R      => R,
+                           R_Type => Etype (R));
+                     end if;
+                  elsif Is_Access_Type (Etype (L)) then
+                     Record_Invalid_Operand_Types_For_Operator_L_Acc_Error
+                          (Op     => N,
+                           L      => L);
 
-                  --  For multiplication and division operators with
-                  --  a fixed-point operand and an integer operand,
-                  --  indicate that the integer operand should be of
-                  --  type Integer.
-
-                  if Nkind (N) in N_Op_Multiply | N_Op_Divide
-                    and then Is_Fixed_Point_Type (Etype (L))
-                    and then Is_Integer_Type (Etype (R))
-                  then
-                     Error_Msg_N ("\convert right operand to `Integer`", N);
-
-                  elsif Nkind (N) = N_Op_Multiply
-                    and then Is_Fixed_Point_Type (Etype (R))
-                    and then Is_Integer_Type (Etype (L))
-                  then
-                     Error_Msg_N ("\convert left operand to `Integer`", N);
+                  elsif Is_Access_Type (Etype (R)) then
+                     Record_Invalid_Operand_Types_For_Operator_R_Acc_Error
+                          (Op     => N,
+                           R      => R);
+                  else
+                     Record_Invalid_Operand_Types_For_Operator_General_Error
+                      (N);
                   end if;
+               else
+                  Error_Msg_N ("invalid operand types for operator&", N);
 
-               --  For concatenation operators it is more difficult to
-               --  determine which is the wrong operand. It is worth
-               --  flagging explicitly an access type, for those who
-               --  might think that a dereference happens here.
+                  if Nkind (N) /= N_Op_Concat then
+                     Error_Msg_NE ("\left operand has}!", N, Etype (L));
+                     Error_Msg_NE ("\right operand has}!", N, Etype (R));
 
-               elsif Is_Access_Type (Etype (L)) then
-                  Error_Msg_N ("\left operand is access type", N);
+                     --  For multiplication and division operators with
+                     --  a fixed-point operand and an integer operand,
+                     --  indicate that the integer operand should be of
+                     --  type Integer.
 
-               elsif Is_Access_Type (Etype (R)) then
-                  Error_Msg_N ("\right operand is access type", N);
+                     if Nkind (N) in N_Op_Multiply | N_Op_Divide
+                        and then Is_Fixed_Point_Type (Etype (L))
+                        and then Is_Integer_Type (Etype (R))
+                     then
+                        Error_Msg_N ("\convert right operand to `Integer`", N);
+
+                     elsif Nkind (N) = N_Op_Multiply
+                        and then Is_Fixed_Point_Type (Etype (R))
+                        and then Is_Integer_Type (Etype (L))
+                     then
+                        Error_Msg_N ("\convert left operand to `Integer`", N);
+                     end if;
+
+                  --  For concatenation operators it is more difficult to
+                  --  determine which is the wrong operand. It is worth
+                  --  flagging explicitly an access type, for those who
+                  --  might think that a dereference happens here.
+
+                  elsif Is_Access_Type (Etype (L)) then
+                     Error_Msg_N ("\left operand is access type", N);
+
+                  elsif Is_Access_Type (Etype (R)) then
+                     Error_Msg_N ("\right operand is access type", N);
+                  end if;
                end if;
             end if;
          end if;

@@ -2343,6 +2343,11 @@ package body Sem_Ch8 is
                      elsif From_Limited_With (Etype (F)) then
                         null;
 
+                     --  Incomplete types are never frozen (AI12-0155-1)
+
+                     elsif Is_Incomplete_Type (Etype (F)) then
+                        null;
+
                      else
                         Error_Msg_NE
                           ("type& must be frozen before this point",
@@ -6323,7 +6328,9 @@ package body Sem_Ch8 is
                Nvis_Messages;
                goto Done;
 
-            elsif Is_Predefined_Unit (Current_Sem_Unit) then
+            elsif Is_Predefined_Unit (Current_Sem_Unit)
+              and then not Is_Predefined_Unit (Main_Unit)
+            then
                --  A use clause in the body of a system file creates conflict
                --  with some entity in a user scope, while rtsfind is active.
                --  Keep only the entity coming from another predefined unit.
@@ -8528,7 +8535,7 @@ package body Sem_Ch8 is
                         Current_Entity (Selector_Name (N));
                begin
                   if Present (F)
-                    and then Is_Overloadable (F)
+                    and then Is_Subprogram (F)
                     and then Present (First_Entity (F))
                     and then not Is_Tagged_Type (Etype (First_Entity (F)))
                   then
@@ -8801,6 +8808,16 @@ package body Sem_Ch8 is
             Error_Msg_NE ("\\found & declared#", N, T_Name);
             Set_Entity (N, Any_Type);
 
+         elsif Is_Current_Instance (N) and then Comes_From_Source (N) then
+            if Nkind (Parent (T_Name)) = N_Subtype_Declaration then
+               Error_Msg_N ("reference to current instance of subtype" &
+                            " does not denote a subtype (RM 8.6)", N);
+            else
+               Error_Msg_N ("reference to current instance of type" &
+                            " does not denote a type (RM 8.6)", N);
+            end if;
+            Set_Entity (N, Any_Type);
+
          else
             --  If the type is an incomplete type created to handle
             --  anonymous access components of a record type, then the
@@ -8831,12 +8848,9 @@ package body Sem_Ch8 is
             if In_Open_Scopes (T_Name) then
                if Ekind (Base_Type (T_Name)) = E_Task_Type then
 
-                  --  In Ada 2005, a task name can be used in an access
-                  --  definition within its own body.
+                  --  OK if the "current instance" rule does not apply.
 
-                  if Ada_Version >= Ada_2005
-                    and then Nkind (Parent (N)) = N_Access_Definition
-                  then
+                  if not Is_Current_Instance (N) then
                      Set_Entity (N, T_Name);
                      Set_Etype  (N, T_Name);
                      return;
@@ -8849,12 +8863,9 @@ package body Sem_Ch8 is
 
                elsif Ekind (Base_Type (T_Name)) = E_Protected_Type then
 
-                  --  In Ada 2005, a protected name can be used in an access
-                  --  definition within its own body.
+                  --  OK if the "current instance" rule does not apply.
 
-                  if Ada_Version >= Ada_2005
-                    and then Nkind (Parent (N)) = N_Access_Definition
-                  then
+                  if not Is_Current_Instance (N) then
                      Set_Entity (N, T_Name);
                      Set_Etype  (N, T_Name);
                      return;
@@ -8974,6 +8985,7 @@ package body Sem_Ch8 is
       while Present (Item) loop
          if Nkind (Item) = N_With_Clause
            and then Private_Present (Item)
+           and then Is_Entity_Name (Name (Item))
            and then Entity (Name (Item)) = E
          then
             return True;
@@ -9986,7 +9998,8 @@ package body Sem_Ch8 is
                or else (Nkind (The_Unit) = N_Subprogram_Body
                          and then not Acts_As_Spec (Cunit (Current_Sem_Unit))))
          then
-            With_Sys := Find_System (Library_Unit (Cunit (Current_Sem_Unit)));
+            With_Sys :=
+              Find_System (Spec_Or_Body_Lib_Unit (Cunit (Current_Sem_Unit)));
          end if;
 
          if No (With_Sys) and then Present (N) then
@@ -10042,8 +10055,8 @@ package body Sem_Ch8 is
 
             Set_Corresponding_Spec (Withn, System_Aux_Id);
             Set_First_Name         (Withn);
-            Set_Implicit_With      (Withn);
-            Set_Library_Unit       (Withn, Cunit (Unum));
+            Set_Is_Implicit_With   (Withn);
+            Set_Withed_Lib_Unit    (Withn, Cunit (Unum));
 
             Insert_After (With_Sys, Withn);
             Mark_Rewrite_Insertion (Withn);

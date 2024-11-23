@@ -80,7 +80,7 @@ enum rid
      are keywords only in specific contexts)  */
   RID_IN, RID_OUT, RID_INOUT, RID_BYCOPY, RID_BYREF, RID_ONEWAY,
 
-  /* ObjC ("PATTR" reserved words - they do not appear after a '@' 
+  /* ObjC ("PATTR" reserved words - they do not appear after a '@'
      and are keywords only as property attributes)  */
   RID_GETTER, RID_SETTER,
   RID_READONLY, RID_READWRITE,
@@ -110,7 +110,8 @@ enum rid
   RID_TYPES_COMPATIBLE_P,      RID_BUILTIN_COMPLEX,	   RID_BUILTIN_SHUFFLE,
   RID_BUILTIN_SHUFFLEVECTOR,   RID_BUILTIN_CONVERTVECTOR,  RID_BUILTIN_TGMATH,
   RID_BUILTIN_HAS_ATTRIBUTE,   RID_BUILTIN_ASSOC_BARRIER,  RID_BUILTIN_STDC,
-  RID_DFLOAT32, RID_DFLOAT64, RID_DFLOAT128,
+  RID_BUILTIN_COUNTED_BY_REF,
+  RID_DFLOAT32, RID_DFLOAT64, RID_DFLOAT128, RID_DFLOAT64X,
 
   /* TS 18661-3 keywords, in the same sequence as the TI_* values.  */
   RID_FLOAT16,
@@ -167,6 +168,7 @@ enum rid
   RID_ADDRESSOF,
   RID_BUILTIN_LAUNDER,
   RID_BUILTIN_BIT_CAST,
+  RID_BUILTIN_OPERATOR_NEW, RID_BUILTIN_OPERATOR_DELETE,
 
   /* C++11 */
   RID_CONSTEXPR, RID_DECLTYPE, RID_NOEXCEPT, RID_NULLPTR, RID_STATIC_ASSERT,
@@ -196,7 +198,7 @@ enum rid
   RID_AT_PRIVATE,  RID_AT_PROTECTED, RID_AT_PUBLIC,  RID_AT_PACKAGE,
   RID_AT_PROTOCOL, RID_AT_SELECTOR,
   RID_AT_THROW,	   RID_AT_TRY,       RID_AT_CATCH,
-  RID_AT_FINALLY,  RID_AT_SYNCHRONIZED, 
+  RID_AT_FINALLY,  RID_AT_SYNCHRONIZED,
   RID_AT_OPTIONAL, RID_AT_REQUIRED, RID_AT_PROPERTY,
   RID_AT_SYNTHESIZE, RID_AT_DYNAMIC,
   RID_AT_INTERFACE,
@@ -821,6 +823,7 @@ extern struct visibility_flags visibility_options;
 
 /* Attribute table common to the C front ends.  */
 extern const struct scoped_attribute_specs c_common_gnu_attribute_table;
+extern const struct scoped_attribute_specs c_common_clang_attribute_table;
 extern const struct scoped_attribute_specs c_common_format_attribute_table;
 
 /* Pointer to function to lazily generate the VAR_DECL for __FUNCTION__ etc.
@@ -838,7 +841,7 @@ extern bool in_late_binary_op;
 extern const char *c_addr_space_name (addr_space_t as);
 extern tree identifier_global_value (tree);
 extern tree identifier_global_tag (tree);
-extern bool names_builtin_p (const char *);
+extern int names_builtin_p (const char *);
 extern tree c_linkage_bindings (tree);
 extern void record_builtin_type (enum rid, const char *, tree);
 extern void start_fname_decls (void);
@@ -848,7 +851,8 @@ extern tree fname_decl (location_t, unsigned, tree);
 
 extern int check_user_alignment (const_tree, bool, bool);
 extern bool check_function_arguments (location_t loc, const_tree, const_tree,
-				      int, tree *, vec<location_t> *);
+				      int, tree *, vec<location_t> *,
+				      bool (*comp_types) (tree, tree));
 extern void check_function_arguments_recurse (void (*)
 					      (void *, tree,
 					       unsigned HOST_WIDE_INT),
@@ -858,10 +862,13 @@ extern void check_function_arguments_recurse (void (*)
 extern bool check_builtin_function_arguments (location_t, vec<location_t>,
 					      tree, tree, int, tree *);
 extern void check_function_format (const_tree, tree, int, tree *,
-				   vec<location_t> *);
+				   vec<location_t> *,
+				   bool (*comp_types) (tree, tree));
 extern bool attribute_fallthrough_p (tree);
 extern tree handle_format_attribute (tree *, tree, tree, int, bool *);
 extern tree handle_format_arg_attribute (tree *, tree, tree, int, bool *);
+extern tree handle_unsequenced_attribute (tree *, tree, tree, int, bool *);
+extern tree handle_reproducible_attribute (tree *, tree, tree, int, bool *);
 extern bool c_common_handle_option (size_t, const char *, HOST_WIDE_INT, int,
 				    location_t,
 				    const struct cl_option_handlers *);
@@ -1211,9 +1218,13 @@ extern const char *c_get_substring_location (const substring_loc &substr_loc,
 					     location_t *out_loc);
 
 /* In c-gimplify.cc.  */
+typedef hash_map<tree, tree_pair,
+		 simple_hashmap_traits<tree_decl_hash,
+				       tree_pair>> bc_hash_map_t;
 typedef struct bc_state
 {
   tree bc_label[2];
+  bc_hash_map_t *bc_hash_map;
 } bc_state_t;
 extern void save_bc_state (bc_state_t *);
 extern void restore_bc_state (bc_state_t *);
@@ -1285,9 +1296,11 @@ enum c_omp_region_type
   C_ORT_DECLARE_SIMD		= 1 << 2,
   C_ORT_TARGET			= 1 << 3,
   C_ORT_EXIT_DATA		= 1 << 4,
+  C_ORT_INTEROP			= 1 << 5,
   C_ORT_OMP_DECLARE_SIMD	= C_ORT_OMP | C_ORT_DECLARE_SIMD,
   C_ORT_OMP_TARGET		= C_ORT_OMP | C_ORT_TARGET,
   C_ORT_OMP_EXIT_DATA		= C_ORT_OMP | C_ORT_EXIT_DATA,
+  C_ORT_OMP_INTEROP		= C_ORT_OMP | C_ORT_INTEROP,
   C_ORT_ACC_TARGET		= C_ORT_ACC | C_ORT_TARGET
 };
 
@@ -1300,6 +1313,7 @@ extern void c_finish_omp_barrier (location_t);
 extern tree c_finish_omp_atomic (location_t, enum tree_code, enum tree_code,
 				 tree, tree, tree, tree, tree, tree, bool,
 				 enum omp_memory_order, bool, bool = false);
+extern bool c_omp_interop_t_p (tree);
 extern bool c_omp_depend_t_p (tree);
 extern void c_finish_omp_depobj (location_t, tree, enum omp_clause_depend_kind,
 				 tree);
@@ -1496,29 +1510,39 @@ extern tree build_userdef_literal (tree suffix_id, tree value,
 				   tree num_string);
 
 
-/* WHILE_STMT accessors. These give access to the condition of the
-   while statement and the body of the while statement, respectively.  */
+/* WHILE_STMT accessors.  These give access to the condition of the
+   while statement, the body and name of the while statement, respectively.  */
 #define WHILE_COND(NODE)	TREE_OPERAND (WHILE_STMT_CHECK (NODE), 0)
 #define WHILE_BODY(NODE)	TREE_OPERAND (WHILE_STMT_CHECK (NODE), 1)
+#define WHILE_NAME(NODE)	TREE_OPERAND (WHILE_STMT_CHECK (NODE), 2)
 
-/* DO_STMT accessors. These give access to the condition of the do
-   statement and the body of the do statement, respectively.  */
+/* DO_STMT accessors.  These give access to the condition of the do
+   statement, the body and name of the do statement, respectively.  */
 #define DO_COND(NODE)		TREE_OPERAND (DO_STMT_CHECK (NODE), 0)
 #define DO_BODY(NODE)		TREE_OPERAND (DO_STMT_CHECK (NODE), 1)
+#define DO_NAME(NODE)		TREE_OPERAND (DO_STMT_CHECK (NODE), 2)
 
-/* FOR_STMT accessors. These give access to the init statement,
-   condition, update expression, and body of the for statement,
+/* FOR_STMT accessors.  These give access to the init statement,
+   condition, update expression, body and name of the for statement,
    respectively.  */
 #define FOR_INIT_STMT(NODE)	TREE_OPERAND (FOR_STMT_CHECK (NODE), 0)
 #define FOR_COND(NODE)		TREE_OPERAND (FOR_STMT_CHECK (NODE), 1)
 #define FOR_EXPR(NODE)		TREE_OPERAND (FOR_STMT_CHECK (NODE), 2)
 #define FOR_BODY(NODE)		TREE_OPERAND (FOR_STMT_CHECK (NODE), 3)
 #define FOR_SCOPE(NODE)		TREE_OPERAND (FOR_STMT_CHECK (NODE), 4)
+#define FOR_NAME(NODE)		TREE_OPERAND (FOR_STMT_CHECK (NODE), 5)
+
+/* BREAK_STMT accessors.  */
+#define BREAK_NAME(NODE)	TREE_OPERAND (BREAK_STMT_CHECK (NODE), 0)
+
+/* CONTINUE_STMT accessors.  */
+#define CONTINUE_NAME(NODE)	TREE_OPERAND (CONTINUE_STMT_CHECK (NODE), 0)
 
 #define SWITCH_STMT_COND(NODE)	TREE_OPERAND (SWITCH_STMT_CHECK (NODE), 0)
 #define SWITCH_STMT_BODY(NODE)	TREE_OPERAND (SWITCH_STMT_CHECK (NODE), 1)
 #define SWITCH_STMT_TYPE(NODE)	TREE_OPERAND (SWITCH_STMT_CHECK (NODE), 2)
 #define SWITCH_STMT_SCOPE(NODE)	TREE_OPERAND (SWITCH_STMT_CHECK (NODE), 3)
+#define SWITCH_STMT_NAME(NODE)	TREE_OPERAND (SWITCH_STMT_CHECK (NODE), 4)
 /* True if there are case labels for all possible values of switch cond, either
    because there is a default: case label or because the case label ranges cover
    all values.  */
@@ -1643,8 +1667,10 @@ extern tree find_tm_attribute (tree);
 extern const struct attribute_spec::exclusions attr_cold_hot_exclusions[];
 extern const struct attribute_spec::exclusions attr_noreturn_exclusions[];
 extern tree handle_noreturn_attribute (tree *, tree, tree, int, bool *);
+extern tree handle_musttail_attribute (tree *, tree, tree, int, bool *);
 extern bool has_attribute (location_t, tree, tree, tree (*)(tree));
 extern tree build_attr_access_from_parms (tree, bool);
+extern void set_musttail_on_return (tree, location_t, bool);
 
 /* In c-format.cc.  */
 extern bool valid_format_string_type_p (tree);

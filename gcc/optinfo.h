@@ -119,7 +119,7 @@ class optinfo
   location_t get_location_t () const { return m_loc.get_location_t (); }
   profile_count get_count () const { return m_loc.get_count (); }
 
-  void add_item (optinfo_item *item);
+  void add_item (std::unique_ptr<optinfo_item> item);
 
   void emit_for_opt_problem () const;
 

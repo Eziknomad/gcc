@@ -107,10 +107,14 @@
     (P14_REGNUM		82)
     (P15_REGNUM		83)
     (LAST_SAVED_REGNUM	83)
-    (FFR_REGNUM		84)
+
+    ;; Floating Point Mode Register, used in FP8 insns.
+    (FPM_REGNUM		84)
+
+    (FFR_REGNUM		85)
     ;; "FFR token": a fake register used for representing the scheduling
     ;; restrictions on FFR-related operations.
-    (FFRT_REGNUM	85)
+    (FFRT_REGNUM	86)
 
     ;; ----------------------------------------------------------------
     ;; Fake registers
@@ -122,17 +126,17 @@
     ;; ABI-related lowering is needed.  These placeholders read and
     ;; write this register.  Instructions that depend on the lowering
     ;; read the register.
-    (LOWERING_REGNUM 86)
+    (LOWERING_REGNUM 87)
 
     ;; Represents the contents of the current function's TPIDR2 block,
     ;; in abstract form.
-    (TPIDR2_BLOCK_REGNUM 87)
+    (TPIDR2_BLOCK_REGNUM 88)
 
     ;; Holds the value that the current function wants PSTATE.ZA to be.
     ;; The actual value can sometimes vary, because it does not track
     ;; changes to PSTATE.ZA that happen during a lazy save and restore.
     ;; Those effects are instead tracked by ZA_SAVED_REGNUM.
-    (SME_STATE_REGNUM 88)
+    (SME_STATE_REGNUM 89)
 
     ;; Instructions write to this register if they set TPIDR2_EL0 to a
     ;; well-defined value.  Instructions read from the register if they
@@ -140,14 +144,14 @@
     ;;
     ;; The register does not model the architected TPIDR2_ELO, just the
     ;; current function's management of it.
-    (TPIDR2_SETUP_REGNUM 89)
+    (TPIDR2_SETUP_REGNUM 90)
 
     ;; Represents the property "has an incoming lazy save been committed?".
-    (ZA_FREE_REGNUM 90)
+    (ZA_FREE_REGNUM 91)
 
     ;; Represents the property "are the current function's ZA contents
     ;; stored in the lazy save buffer, rather than in ZA itself?".
-    (ZA_SAVED_REGNUM 91)
+    (ZA_SAVED_REGNUM 92)
 
     ;; Represents the contents of the current function's ZA state in
     ;; abstract form.  At various times in the function, these contents
@@ -155,10 +159,10 @@
     ;;
     ;; The contents persist even when the architected ZA is off.  Private-ZA
     ;; functions have no effect on its contents.
-    (ZA_REGNUM 92)
+    (ZA_REGNUM 93)
 
     ;; Similarly represents the contents of the current function's ZT0 state.
-    (ZT0_REGNUM 93)
+    (ZT0_REGNUM 94)
 
     (FIRST_FAKE_REGNUM	LOWERING_REGNUM)
     (LAST_FAKE_REGNUM	ZT0_REGNUM)
@@ -377,6 +381,11 @@
     UNSPECV_BTI_C		; Represent BTI c.
     UNSPECV_BTI_J		; Represent BTI j.
     UNSPECV_BTI_JC		; Represent BTI jc.
+    UNSPECV_CHKFEAT		; Represent CHKFEAT X16.
+    UNSPECV_GCSPR		; Represent MRS Xn, GCSPR_EL0
+    UNSPECV_GCSPOPM		; Represent GCSPOPM.
+    UNSPECV_GCSSS1		; Represent GCSSS1 Xt.
+    UNSPECV_GCSSS2		; Represent GCSSS2 Xt.
     UNSPECV_TSTART		; Represent transaction start.
     UNSPECV_TCOMMIT		; Represent transaction commit.
     UNSPECV_TCANCEL		; Represent transaction cancel.
@@ -477,7 +486,7 @@
 	(eq_attr "arch" "any")
 
 	(and (eq_attr "arch" "rcpc8_4")
-	     (match_test "AARCH64_ISA_RCPC8_4"))
+	     (match_test "TARGET_RCPC2"))
 
 	(and (eq_attr "arch" "fp")
 	     (match_test "TARGET_FLOAT"))
@@ -505,11 +514,32 @@
     (const_string "yes")
     (const_string "no")))
 
+;; True if this a bfloat16 operation.  Only used for certain instructions.
+(define_attr "is_bf16" "false,true" (const_string "false"))
+
+;; True if this alternative uses an SVE instruction in which the operands
+;; are reversed.  This can happen for naturally commutative operations
+;; such as FADD, or when using things like FSUBR in preference to FSUB,
+;; or similarly when using things like FMAD in preference to FMLA.
+(define_attr "is_rev" "false,true" (const_string "false"))
+
+;; True if this operation supports is_rev-style instructions for bfloat16.
+(define_attr "supports_bf16_rev" "false,true" (const_string "false"))
+
+;; Selectively enable alternatives based on the mode of the operation.
+(define_attr "mode_enabled" "false,true"
+  (cond [(and (eq_attr "is_bf16" "true")
+	      (eq_attr "is_rev" "true")
+	      (eq_attr "supports_bf16_rev" "false"))
+	 (const_string "false")]
+	(const_string "true")))
+
 ;; Attribute that controls whether an alternative is enabled or not.
-;; Currently it is only used to disable alternatives which touch fp or simd
-;; registers when -mgeneral-regs-only is specified or to require a special
-;; architecture support.
-(define_attr "enabled" "no,yes" (attr "arch_enabled"))
+(define_attr "enabled" "no,yes"
+  (if_then_else (and (eq_attr "arch_enabled" "yes")
+		     (eq_attr "mode_enabled" "true"))
+		(const_string "yes")
+		(const_string "no")))
 
 ;; Attribute that specifies whether we are dealing with a branch to a
 ;; label that is far away, i.e. further away than the maximum/minimum
@@ -585,8 +615,6 @@
 (include "../arm/cortex-a53.md")
 (include "../arm/cortex-a57.md")
 (include "../arm/exynos-m1.md")
-(include "falkor.md")
-(include "saphira.md")
 (include "thunderx.md")
 (include "../arm/xgene1.md")
 (include "thunderx2t99.md")
@@ -1192,6 +1220,88 @@
 		      (const_int 1)))]
 )
 
+(define_expand "save_stack_nonlocal"
+  [(set (match_operand 0 "memory_operand")
+        (match_operand 1 "register_operand"))]
+  ""
+{
+  rtx stack_slot = adjust_address (operands[0], Pmode, 0);
+  emit_move_insn (stack_slot, operands[1]);
+
+  if (aarch64_gcs_enabled ())
+    {
+      /* Save GCS with code like
+		mov     x16, 1
+		chkfeat x16
+		tbnz    x16, 0, .L_done
+		mrs     tmp, gcspr_el0
+		str     tmp, [%0, 8]
+	.L_done:  */
+
+      rtx done_label = gen_label_rtx ();
+      rtx r16 = gen_rtx_REG (DImode, R16_REGNUM);
+      emit_move_insn (r16, const1_rtx);
+      emit_insn (gen_aarch64_chkfeat ());
+      emit_insn (gen_tbranch_neqi3 (r16, const0_rtx, done_label));
+      rtx gcs_slot = adjust_address (operands[0], Pmode, GET_MODE_SIZE (Pmode));
+      rtx gcs = gen_reg_rtx (Pmode);
+      emit_insn (gen_aarch64_load_gcspr (gcs));
+      emit_move_insn (gcs_slot, gcs);
+      emit_label (done_label);
+    }
+  DONE;
+})
+
+(define_expand "restore_stack_nonlocal"
+  [(set (match_operand 0 "register_operand" "")
+	(match_operand 1 "memory_operand" ""))]
+  ""
+{
+  rtx stack_slot = adjust_address (operands[1], Pmode, 0);
+  emit_move_insn (operands[0], stack_slot);
+
+  if (aarch64_gcs_enabled ())
+    {
+      /* Restore GCS with code like
+		mov     x16, 1
+		chkfeat x16
+		tbnz    x16, 0, .L_done
+		ldr     tmp1, [%1, 8]
+		mrs     tmp2, gcspr_el0
+		subs    tmp2, tmp1, tmp2
+		b.eq    .L_done
+	.L_loop:
+		gcspopm
+		subs    tmp2, tmp2, 8
+		b.ne    .L_loop
+	.L_done:  */
+
+      rtx loop_label = gen_label_rtx ();
+      rtx done_label = gen_label_rtx ();
+      rtx r16 = gen_rtx_REG (DImode, R16_REGNUM);
+      emit_move_insn (r16, const1_rtx);
+      emit_insn (gen_aarch64_chkfeat ());
+      emit_insn (gen_tbranch_neqi3 (r16, const0_rtx, done_label));
+      rtx gcs_slot = adjust_address (operands[1], Pmode, GET_MODE_SIZE (Pmode));
+      rtx gcs_old = gen_reg_rtx (Pmode);
+      emit_move_insn (gcs_old, gcs_slot);
+      rtx gcs_now = gen_reg_rtx (Pmode);
+      emit_insn (gen_aarch64_load_gcspr (gcs_now));
+      emit_insn (gen_subdi3_compare1 (gcs_now, gcs_old, gcs_now));
+      rtx cc_reg = gen_rtx_REG (CC_NZmode, CC_REGNUM);
+      rtx cmp_rtx = gen_rtx_fmt_ee (EQ, DImode, cc_reg, const0_rtx);
+      emit_jump_insn (gen_condjump (cmp_rtx, cc_reg, done_label));
+      emit_label (loop_label);
+      emit_insn (gen_aarch64_gcspopm_xzr ());
+      emit_insn (gen_adddi3_compare0 (gcs_now, gcs_now, GEN_INT (-8)));
+      cc_reg = gen_rtx_REG (CC_NZmode, CC_REGNUM);
+      cmp_rtx = gen_rtx_fmt_ee (NE, DImode, cc_reg, const0_rtx);
+      emit_jump_insn (gen_condjump (cmp_rtx, cc_reg, loop_label));
+      emit_label (done_label);
+    }
+  DONE;
+})
+
 ;; -------------------------------------------------------------------
 ;; Subroutine calls and sibcalls
 ;; -------------------------------------------------------------------
@@ -1405,6 +1515,8 @@
      [w, r Z  ; neon_from_gp<q>, nosimd     ] fmov\t%s0, %w1
      [w, w    ; neon_dup       , simd       ] dup\t%<Vetype>0, %1.<v>[0]
      [w, w    ; neon_dup       , nosimd     ] fmov\t%s0, %s1
+     [Umv, r  ; mrs            , *          ] msr\t%0, %x1
+     [r, Umv  ; mrs            , *          ] mrs\t%x0, %1
   }
 )
 
@@ -1467,6 +1579,8 @@
      [r  , w  ; f_mrc    , fp  , 4] fmov\t%w0, %s1
      [w  , w  ; fmov     , fp  , 4] fmov\t%s0, %s1
      [w  , Ds ; neon_move, simd, 4] << aarch64_output_scalar_simd_mov_immediate (operands[1], SImode);
+     [Umv, r  ; mrs      , *   , 4] msr\t%0, %x1
+     [r, Umv  ; mrs      , *   , 4] mrs\t%x0, %1
   }
   "CONST_INT_P (operands[1]) && !aarch64_move_imm (INTVAL (operands[1]), SImode)
     && REG_P (operands[0]) && GP_REGNUM_P (REGNO (operands[0]))"
@@ -1505,6 +1619,8 @@
      [w, w  ; fmov     , fp  , 4] fmov\t%d0, %d1
      [w, Dd ; neon_move, simd, 4] << aarch64_output_scalar_simd_mov_immediate (operands[1], DImode);
      [w, Dx ; neon_move, simd, 8] #
+     [Umv, r; mrs      , *   , 4] msr\t%0, %1
+     [r, Umv; mrs      , *   , 4] mrs\t%0, %1
   }
   "CONST_INT_P (operands[1])
    && REG_P (operands[0])
@@ -5069,18 +5185,18 @@
 
 ;; Binary logical operators negating one operand, i.e. (a & !b), (a | !b).
 
-(define_insn "*<NLOGICAL:optab>_one_cmpl<mode>3"
+(define_insn "<NLOGICAL:optab>n<mode>3"
   [(set (match_operand:GPI 0 "register_operand")
-	(NLOGICAL:GPI (not:GPI (match_operand:GPI 1 "register_operand"))
-		     (match_operand:GPI 2 "register_operand")))]
+	(NLOGICAL:GPI (not:GPI (match_operand:GPI 2 "register_operand"))
+		     (match_operand:GPI 1 "register_operand")))]
   ""
   {@ [ cons: =0 , 1 , 2 ; attrs: type , arch  ]
-     [ r        , r , r ; logic_reg   , *     ] <NLOGICAL:nlogical>\t%<w>0, %<w>2, %<w>1
-     [ w        , w , w ; neon_logic  , simd  ] <NLOGICAL:nlogical>\t%0.<Vbtype>, %2.<Vbtype>, %1.<Vbtype>
+     [ r        , r , r ; logic_reg   , *     ] <NLOGICAL:nlogical>\t%<w>0, %<w>1, %<w>2
+     [ w        , w , w ; neon_logic  , simd  ] <NLOGICAL:nlogical>\t%0.<Vbtype>, %1.<Vbtype>, %2.<Vbtype>
   }
 )
 
-(define_insn "*<NLOGICAL:optab>_one_cmplsidi3_ze"
+(define_insn "*<NLOGICAL:optab>nsidi3_ze"
   [(set (match_operand:DI 0 "register_operand" "=r")
 	(zero_extend:DI
 	  (NLOGICAL:SI (not:SI (match_operand:SI 1 "register_operand" "r"))
@@ -5331,30 +5447,63 @@
 ;; MOV	w0, v2.b[0]
 
 (define_expand "popcount<mode>2"
-  [(set (match_operand:GPI 0 "register_operand")
-	(popcount:GPI (match_operand:GPI 1 "register_operand")))]
-  "TARGET_CSSC || TARGET_SIMD"
+  [(set (match_operand:ALLI 0 "register_operand")
+	(popcount:ALLI (match_operand:ALLI 1 "register_operand")))]
+  "TARGET_CSSC ? GET_MODE_BITSIZE (<MODE>mode) >= 32 : TARGET_SIMD"
 {
+  if (!TARGET_CSSC && TARGET_SVE && <MODE>mode != QImode)
+    {
+      rtx tmp = gen_reg_rtx (<VEC_POP_MODE>mode);
+      rtx op1 = gen_lowpart (<VEC_POP_MODE>mode, operands[1]);
+      emit_insn (gen_popcount<vec_pop_mode>2 (tmp, op1));
+      emit_move_insn (operands[0], gen_lowpart (<MODE>mode, tmp));
+      DONE;
+    }
+
   if (!TARGET_CSSC)
     {
       rtx v = gen_reg_rtx (V8QImode);
       rtx v1 = gen_reg_rtx (V8QImode);
       rtx in = operands[1];
       rtx out = operands[0];
-      if(<MODE>mode == SImode)
-	{
-	  rtx tmp;
-	  tmp = gen_reg_rtx (DImode);
-	  /* If we have SImode, zero extend to DImode, pop count does
-	     not change if we have extra zeros. */
-	  emit_insn (gen_zero_extendsidi2 (tmp, in));
-	  in = tmp;
-	}
+      /* SImode and HImode should be zero extended to DImode.
+	 popcount does not change if we have extra zeros.  */
+      if (<MODE>mode == SImode || <MODE>mode == HImode)
+	in = convert_to_mode (DImode, in, true);
+
       emit_move_insn (v, gen_lowpart (V8QImode, in));
       emit_insn (gen_popcountv8qi2 (v1, v));
-      emit_insn (gen_aarch64_zero_extend<mode>_reduc_plus_v8qi (out, v1));
+      /* QImode, just extract from the v8qi vector.  */
+      if (<MODE>mode == QImode)
+	emit_move_insn (out, gen_lowpart (QImode, v1));
+      /* HI and SI, reduction is zero extended to SImode. */
+      else if (<MODE>mode == SImode || <MODE>mode == HImode)
+	{
+	  rtx out1 = gen_reg_rtx (SImode);
+	  emit_insn (gen_aarch64_zero_extendsi_reduc_plus_v8qi (out1, v1));
+	  emit_move_insn (out, gen_lowpart (<MODE>mode, out1));
+	}
+      /* DImode, reduction is zero extended to DImode. */
+      else
+	{
+	  gcc_assert (<MODE>mode == DImode);
+	  emit_insn (gen_aarch64_zero_extenddi_reduc_plus_v8qi (out, v1));
+	}
       DONE;
     }
+})
+
+(define_expand "popcountti2"
+  [(match_operand:DI 0 "register_operand")
+   (match_operand:TI 1 "register_operand")]
+  "TARGET_SIMD && !TARGET_CSSC"
+{
+  rtx v = gen_reg_rtx (V16QImode);
+  rtx v1 = gen_reg_rtx (V16QImode);
+  emit_move_insn (v, gen_lowpart (V16QImode, operands[1]));
+  emit_insn (gen_popcountv16qi2 (v1, v));
+  emit_insn (gen_aarch64_zero_extenddi_reduc_plus_v16qi (operands[0], v1));
+  DONE;
 })
 
 (define_insn "clrsb<mode>2"
@@ -5398,7 +5547,7 @@
 	 (const_int 0)))]
   ""
   "tst\\t%<w>0, <short_mask>"
-  [(set_attr "type" "alus_imm")]
+  [(set_attr "type" "logics_imm")]
 )
 
 (define_insn "*ands<GPI:mode>_compare0"
@@ -7184,13 +7333,12 @@
 }
 )
 
-;; For copysign (x, y), we want to generate:
+;; For copysignf (x, y), we want to generate:
 ;;
-;;   LDR d2, #(1 << 63)
-;;   BSL v2.8b, [y], [x]
+;;	movi    v31.4s, 0x80, lsl 24
+;;	bit     v0.16b, v1.16b, v31.16b
 ;;
-;; or another, equivalent, sequence using one of BSL/BIT/BIF.  Because
-;; we expect these operations to nearly always operate on
+;; Because we expect these operations to nearly always operate on
 ;; floating-point values, we do not want the operation to be
 ;; simplified into a bit-field insert operation that operates on the
 ;; integer side, since typically that would involve three inter-bank
@@ -7205,32 +7353,25 @@
    (match_operand:GPF 2 "nonmemory_operand")]
   "TARGET_SIMD"
 {
-  rtx signbit_const = GEN_INT (HOST_WIDE_INT_M1U
-			       << (GET_MODE_BITSIZE (<MODE>mode) - 1));
-  /* copysign (x, -1) should instead be expanded as orr with the sign
-     bit.  */
+  rtx sign = GEN_INT (HOST_WIDE_INT_M1U << (GET_MODE_BITSIZE (<MODE>mode) - 1));
+  rtx v_bitmask = gen_const_vec_duplicate (<VQ_INT_EQUIV>mode, sign);
+  v_bitmask = force_reg (<VQ_INT_EQUIV>mode, v_bitmask);
+
+  /* copysign (x, -1) should instead be expanded as orr with the signbit.  */
   rtx op2_elt = unwrap_const_vec_duplicate (operands[2]);
+
   if (GET_CODE (op2_elt) == CONST_DOUBLE
       && real_isneg (CONST_DOUBLE_REAL_VALUE (op2_elt)))
     {
-      rtx v_bitmask
-	= force_reg (V2<V_INT_EQUIV>mode,
-		     gen_const_vec_duplicate (V2<V_INT_EQUIV>mode,
-					      signbit_const));
-
-      emit_insn (gen_iorv2<v_int_equiv>3 (
-	lowpart_subreg (V2<V_INT_EQUIV>mode, operands[0], <MODE>mode),
-	lowpart_subreg (V2<V_INT_EQUIV>mode, operands[1], <MODE>mode),
+      emit_insn (gen_ior<vq_int_equiv>3 (
+	lowpart_subreg (<VQ_INT_EQUIV>mode, operands[0], <MODE>mode),
+	lowpart_subreg (<VQ_INT_EQUIV>mode, operands[1], <MODE>mode),
 	v_bitmask));
       DONE;
     }
-
-  machine_mode int_mode = <V_INT_EQUIV>mode;
-  rtx bitmask = gen_reg_rtx (int_mode);
-  emit_move_insn (bitmask, signbit_const);
   operands[2] = force_reg (<MODE>mode, operands[2]);
   emit_insn (gen_copysign<mode>3_insn (operands[0], operands[1], operands[2],
-				       bitmask));
+				       v_bitmask));
   DONE;
 }
 )
@@ -7239,23 +7380,21 @@
   [(set (match_operand:GPF 0 "register_operand")
 	(unspec:GPF [(match_operand:GPF 1 "register_operand")
 		     (match_operand:GPF 2 "register_operand")
-		     (match_operand:<V_INT_EQUIV> 3 "register_operand")]
+		     (match_operand:<VQ_INT_EQUIV> 3 "register_operand")]
 	 UNSPEC_COPYSIGN))]
   "TARGET_SIMD"
   {@ [ cons: =0 , 1 , 2 , 3 ; attrs: type  ]
      [ w        , w , w , 0 ; neon_bsl<q>  ] bsl\t%0.<Vbtype>, %2.<Vbtype>, %1.<Vbtype>
      [ w        , 0 , w , w ; neon_bsl<q>  ] bit\t%0.<Vbtype>, %2.<Vbtype>, %3.<Vbtype>
      [ w        , w , 0 , w ; neon_bsl<q>  ] bif\t%0.<Vbtype>, %1.<Vbtype>, %3.<Vbtype>
-     [ r        , r , 0 , X ; bfm          ] bfxil\t%<w1>0, %<w1>1, #0, <sizem1>
   }
 )
 
-
-;; For xorsign (x, y), we want to generate:
+;; For xorsignf (x, y), we want to generate:
 ;;
-;; LDR   d2, #1<<63
-;; AND   v3.8B, v1.8B, v2.8B
-;; EOR   v0.8B, v0.8B, v3.8B
+;;	movi    v31.4s, 0x80, lsl 24
+;;	and     v31.16b, v31.16b, v1.16b
+;;	eor     v0.16b, v31.16b, v0.16b
 ;;
 
 (define_expand "@xorsign<mode>3"
@@ -7574,7 +7713,8 @@
     if (TARGET_SVE)
       {
 	rtx abi = aarch64_gen_callee_cookie (AARCH64_ISA_MODE,
-					     aarch64_tlsdesc_abi_id ());
+					     aarch64_tlsdesc_abi_id (),
+					     false);
 	rtx_insn *call
 	  = emit_call_insn (gen_tlsdesc_small_sve_<mode> (operands[0], abi));
 	RTL_CONST_CALL_P (call) = 1;
@@ -8276,6 +8416,49 @@
 		   UNSPEC_RESTORE_NZCV))]
   ""
   "msr\tnzcv, %0"
+)
+
+;; CHKFEAT instruction
+(define_insn "aarch64_chkfeat"
+  [(set (reg:DI R16_REGNUM)
+        (unspec_volatile:DI [(reg:DI R16_REGNUM)] UNSPECV_CHKFEAT))]
+  ""
+  "hint\\t40 // chkfeat x16"
+)
+
+;; Guarded Control Stack (GCS) instructions
+(define_insn "aarch64_load_gcspr"
+  [(set (match_operand:DI 0 "register_operand" "=r")
+	(unspec_volatile:DI [(const_int 0)] UNSPECV_GCSPR))]
+  ""
+  "mrs\\t%0, s3_3_c2_c5_1 // gcspr_el0"
+  [(set_attr "type" "mrs")]
+)
+
+(define_insn "aarch64_gcspopm"
+  [(set (match_operand:DI 0 "register_operand" "=r")
+	(unspec_volatile:DI [(match_operand:DI 1 "register_operand" "0")] UNSPECV_GCSPOPM))]
+  ""
+  "sysl\\t%0, #3, c7, c7, #1 // gcspopm"
+)
+
+(define_insn "aarch64_gcspopm_xzr"
+  [(unspec_volatile [(const_int 0)] UNSPECV_GCSPOPM)]
+  ""
+  "sysl\\txzr, #3, c7, c7, #1 // gcspopm"
+)
+
+(define_insn "aarch64_gcsss1"
+  [(unspec_volatile [(match_operand:DI 0 "register_operand" "r")] UNSPECV_GCSSS1)]
+  ""
+  "sys\\t#3, c7, c7, #2, %0 // gcsss1"
+)
+
+(define_insn "aarch64_gcsss2"
+  [(set (match_operand:DI 0 "register_operand" "=r")
+  	(unspec_volatile:DI [(match_operand:DI 1 "register_operand" "0")] UNSPECV_GCSSS2))]
+  ""
+  "sysl\\t%0, #3, c7, c7, #3 // gcsss2"
 )
 
 ;; AdvSIMD Stuff

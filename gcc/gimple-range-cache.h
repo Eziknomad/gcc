@@ -21,7 +21,7 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_SSA_RANGE_CACHE_H
 #define GCC_SSA_RANGE_CACHE_H
 
-#include "gimple-range-gori.h" 
+#include "gimple-range-gori.h"
 #include "gimple-range-infer.h"
 #include "gimple-range-phi.h"
 
@@ -78,8 +78,8 @@ protected:
 class ssa_lazy_cache : public ssa_cache
 {
 public:
-  inline ssa_lazy_cache () { active_p = BITMAP_ALLOC (NULL); }
-  inline ~ssa_lazy_cache () { BITMAP_FREE (active_p); }
+  ssa_lazy_cache (bitmap_obstack *ob = NULL);
+  ~ssa_lazy_cache ();
   inline bool empty_p () const { return bitmap_empty_p (active_p); }
   virtual bool has_range (tree name) const;
   virtual bool set_range (tree name, const vrange &r);
@@ -89,10 +89,12 @@ public:
   virtual void clear ();
   void merge (const ssa_lazy_cache &);
 protected:
+  bitmap_obstack m_bitmaps;
+  bitmap_obstack *m_ob;
   bitmap active_p;
 };
 
-// This class provides all the caches a global ranger may need, and makes 
+// This class provides all the caches a global ranger may need, and makes
 // them available for gori-computes to query so outgoing edges can be
 // properly calculated.
 

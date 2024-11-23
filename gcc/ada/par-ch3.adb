@@ -1196,10 +1196,6 @@ package body Ch3 is
       elsif Token = Tok_Left_Paren then
          return P_Index_Or_Discriminant_Constraint;
 
-      elsif Token = Tok_In then
-         Ignore (Tok_In);
-         return P_Constraint_Opt;
-
       --  One more possibility is e.g. 1 .. 10 (i.e. missing RANGE keyword)
 
       elsif Token = Tok_Identifier      or else
@@ -3845,7 +3841,7 @@ package body Ch3 is
                --  end if;
 
                Set_Subtype_Indication (CompDef_Node, Empty);
-               Set_Aliased_Present    (CompDef_Node, False);
+               Set_Aliased_Present    (CompDef_Node, Aliased_Present);
                Set_Access_Definition  (CompDef_Node,
                  P_Access_Definition (Not_Null_Present));
             else

@@ -149,7 +149,7 @@ init_expmed_one_conv (struct init_expmed_rtl *all, scalar_int_mode to_mode,
   if (GET_MODE_CLASS (from_mode) == MODE_PARTIAL_INT
       && pow2p_hwi (from_size))
     from_size --;
-  
+
   /* Assume cost of zero-extend and sign-extend is the same.  */
   which = (to_size < from_size ? all->trunc : all->zext);
 
@@ -806,7 +806,7 @@ store_bit_field_1 (rtx str_rtx, poly_uint64 bitsize, poly_uint64 bitnum,
       if (known_eq (bitnum, 0U)
 	  && known_eq (bitsize, GET_MODE_BITSIZE (GET_MODE (op0))))
 	{
-	  sub = simplify_gen_subreg (GET_MODE (op0), value, fieldmode, 0);
+	  sub = force_subreg (GET_MODE (op0), value, fieldmode, 0);
 	  if (sub)
 	    {
 	      if (reverse)
@@ -972,7 +972,8 @@ store_integral_bit_field (rtx op0, opt_scalar_int_mode op0_mode,
 	 objects are meant to be handled before calling this function.  */
       fixed_size_mode value_mode = as_a <fixed_size_mode> (GET_MODE (value));
       if (value_mode == VOIDmode)
-	value_mode = smallest_int_mode_for_size (nwords * BITS_PER_WORD);
+	value_mode
+	  = smallest_int_mode_for_size (nwords * BITS_PER_WORD).require ();
 
       last = get_last_insn ();
       for (int i = 0; i < nwords; i++)
@@ -986,6 +987,18 @@ store_integral_bit_field (rtx op0, opt_scalar_int_mode op0_mode,
 	    = backwards ^ reverse
 	      ? MAX ((int) bitsize - (i + 1) * BITS_PER_WORD, 0)
 	      : i * BITS_PER_WORD;
+
+	  /* No further action is needed if the target is a register and if
+	     this field lies completely outside that register.  */
+	  if (REG_P (op0) && known_ge (bitnum + bit_offset,
+				       GET_MODE_BITSIZE (GET_MODE (op0))))
+	    {
+	      if (backwards ^ reverse)
+		continue;
+	      /* For forward operation we are finished.  */
+	      return true;
+	    }
+
 	  /* Starting word number in the value.  */
 	  const unsigned int wordnum
 	    = backwards
@@ -1633,7 +1646,7 @@ extract_bit_field_as_subreg (machine_mode mode, rtx op0,
       && known_eq (bitsize, GET_MODE_BITSIZE (mode))
       && lowpart_bit_field_p (bitnum, bitsize, op0_mode)
       && TRULY_NOOP_TRUNCATION_MODES_P (mode, op0_mode))
-    return simplify_gen_subreg (mode, op0, op0_mode, bytenum);
+    return force_subreg (mode, op0, op0_mode, bytenum);
   return NULL_RTX;
 }
 
@@ -1915,7 +1928,7 @@ extract_integral_bit_field (rtx op0, opt_scalar_int_mode op0_mode,
       if (target == 0 || !REG_P (target) || !valid_multiword_target_p (target))
 	target = gen_reg_rtx (mode);
 
-      /* In case we're about to clobber a base register or something 
+      /* In case we're about to clobber a base register or something
 	 (see gcc.c-torture/execute/20040625-1.c).   */
       if (reg_mentioned_p (target, op0))
 	target = gen_reg_rtx (mode);
@@ -2000,11 +2013,11 @@ extract_integral_bit_field (rtx op0, opt_scalar_int_mode op0_mode,
 	  return convert_extracted_bit_field (target, mode, tmode, unsignedp);
 	}
       /* If OP0 is a hard register, copy it to a pseudo before calling
-	 simplify_gen_subreg.  */
+	 force_subreg.  */
       if (REG_P (op0) && HARD_REGISTER_P (op0))
 	op0 = copy_to_reg (op0);
-      op0 = simplify_gen_subreg (word_mode, op0, op0_mode.require (),
-				 bitnum / BITS_PER_WORD * UNITS_PER_WORD);
+      op0 = force_subreg (word_mode, op0, op0_mode.require (),
+			  bitnum / BITS_PER_WORD * UNITS_PER_WORD);
       op0_mode = word_mode;
       bitnum %= BITS_PER_WORD;
     }
@@ -4392,7 +4405,7 @@ expand_divmod (int rem_flag, enum tree_code code, machine_mode mode,
   /* Only deduct something for a REM if the last divide done was
      for a different constant.   Then set the constant of the last
      divide.  */
-  max_cost = (unsignedp 
+  max_cost = (unsignedp
 	      ? udiv_cost (speed, compute_mode)
 	      : sdiv_cost (speed, compute_mode));
   if (rem_flag && ! (last_div_const != 0 && op1_is_constant
@@ -5632,11 +5645,9 @@ emit_store_flag_1 (rtx target, enum rtx_code code, rtx op0, rtx op1,
   enum insn_code icode;
   machine_mode compare_mode;
   enum mode_class mclass;
-  enum rtx_code scode;
 
   if (unsignedp)
     code = unsigned_condition (code);
-  scode = swap_condition (code);
 
   /* If one operand is constant, make it the second one.  Only do this
      if the other operand is not constant as well.  */
@@ -5751,6 +5762,8 @@ emit_store_flag_1 (rtx target, enum rtx_code code, rtx op0, rtx op1,
 
 	  if (GET_MODE_CLASS (mode) == MODE_FLOAT)
 	    {
+	      enum rtx_code scode = swap_condition (code);
+
 	      tem = emit_cstore (target, icode, scode, mode, compare_mode,
 				 unsignedp, op1, op0, normalizep, target_mode);
 	      if (tem)
@@ -5774,8 +5787,8 @@ emit_store_flag_1 (rtx target, enum rtx_code code, rtx op0, rtx op1,
 
 	  /* Do a logical OR or AND of the two words and compare the
 	     result.  */
-	  op00 = simplify_gen_subreg (word_mode, op0, int_mode, 0);
-	  op01 = simplify_gen_subreg (word_mode, op0, int_mode, UNITS_PER_WORD);
+	  op00 = force_subreg (word_mode, op0, int_mode, 0);
+	  op01 = force_subreg (word_mode, op0, int_mode, UNITS_PER_WORD);
 	  tem = expand_binop (word_mode,
 			      op1 == const0_rtx ? ior_optab : and_optab,
 			      op00, op01, NULL_RTX, unsignedp,
@@ -5790,9 +5803,7 @@ emit_store_flag_1 (rtx target, enum rtx_code code, rtx op0, rtx op1,
 	  rtx op0h;
 
 	  /* If testing the sign bit, can just test on high word.  */
-	  op0h = simplify_gen_subreg (word_mode, op0, int_mode,
-				      subreg_highpart_offset (word_mode,
-							      int_mode));
+	  op0h = force_highpart_subreg (word_mode, op0, int_mode);
 	  tem = emit_store_flag (NULL_RTX, code, op0h, op1, word_mode,
 				 unsignedp, normalizep);
 	}
@@ -6273,6 +6284,50 @@ emit_store_flag_force (rtx target, enum rtx_code code, rtx op0, rtx op1,
   emit_label (label);
 
   return target;
+}
+
+/* Expand a vector (left) rotate of MODE of X by an immediate AMT as a vector
+   permute operation.  Emit code to put the result in DST if successfull and
+   return it.  Otherwise return NULL.  This is intended to implement vector
+   rotates by byte amounts using vector permutes when the target does not offer
+   native vector rotate operations.  */
+rtx
+expand_rotate_as_vec_perm (machine_mode mode, rtx dst, rtx x, rtx amt)
+{
+  rtx amt_unwrap = unwrap_const_vec_duplicate (amt);
+  /* For now handle only rotate by the same integer constant in all lanes.
+     In principle rotates by any constant vector are representable through
+     permutes as long as the individual rotate amounts are multiples of
+     BITS_PER_UNIT.  */
+  if (!CONST_INT_P (amt_unwrap))
+    return NULL_RTX;
+
+  int rotamnt = INTVAL (amt_unwrap);
+  if (rotamnt % BITS_PER_UNIT != 0)
+    return NULL_RTX;
+  machine_mode qimode;
+  if (!qimode_for_vec_perm (mode).exists (&qimode))
+    return NULL_RTX;
+
+  vec_perm_builder builder;
+  unsigned nunits = GET_MODE_SIZE (GET_MODE_INNER (mode));
+  poly_uint64 total_units = GET_MODE_SIZE (mode);
+  builder.new_vector (total_units, nunits, 3);
+  unsigned rot_bytes = rotamnt / BITS_PER_UNIT;
+  unsigned rot_to_perm = BYTES_BIG_ENDIAN ? rot_bytes : nunits - rot_bytes;
+  for (unsigned j = 0; j < 3 * nunits; j += nunits)
+    for (unsigned i = 0; i < nunits; i++)
+      builder.quick_push ((rot_to_perm + i) % nunits + j);
+
+  rtx perm_src = lowpart_subreg (qimode, x, mode);
+  rtx perm_dst = lowpart_subreg (qimode, dst, mode);
+  rtx res
+    = expand_vec_perm_const (qimode, perm_src, perm_src, builder,
+			     qimode, perm_dst);
+  if (!res)
+    return NULL_RTX;
+  emit_move_insn (dst, lowpart_subreg (mode, res, qimode));
+  return dst;
 }
 
 /* Helper function for canonicalize_cmp_for_target.  Swap between inclusive

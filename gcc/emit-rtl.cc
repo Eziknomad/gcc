@@ -625,7 +625,7 @@ rtx_to_double_int (const_rtx cst)
     }
   else
     gcc_unreachable ();
-  
+
   return r;
 }
 #endif
@@ -4403,7 +4403,7 @@ set_insn_deleted (rtx_insn *insn)
 /* Unlink INSN from the insn chain.
 
    This function knows how to handle sequences.
-   
+
    This function does not invalidate data flow information associated with
    INSN (i.e. does not call df_insn_delete).  That makes this function
    usable for only disconnecting an insn from the chain, and re-emit it
@@ -6366,7 +6366,8 @@ init_emit_once (void)
   else
     const_true_rtx = gen_rtx_CONST_INT (VOIDmode, STORE_FLAG_VALUE);
 
-  double_mode = float_mode_for_size (DOUBLE_TYPE_SIZE).require ();
+  mode = targetm.c.mode_for_floating_type (TI_DOUBLE_TYPE);
+  double_mode = as_a<scalar_float_mode> (mode);
 
   real_from_integer (&dconst0, double_mode, 0, SIGNED);
   real_from_integer (&dconst1, double_mode, 1, SIGNED);

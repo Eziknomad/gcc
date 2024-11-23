@@ -79,6 +79,8 @@ static const sve_vec_cost neoverse512tvb_sve_vector_cost =
      operation more than a 64-bit gather.  */
   14, /* gather_load_x32_cost  */
   12, /* gather_load_x64_cost  */
+  42, /* gather_load_x32_init_cost  */
+  24, /* gather_load_x64_init_cost  */
   3 /* scatter_store_elt_cost  */
 };
 
@@ -141,7 +143,7 @@ static const struct tune_params neoverse512tvb_tunings =
     1 /* store_pred.  */
   }, /* memmov_cost.  */
   3, /* issue_rate  */
-  (AARCH64_FUSE_AES_AESMC | AARCH64_FUSE_CMP_BRANCH), /* fusible_ops  */
+  AARCH64_FUSE_BASE, /* fusible_ops  */
   "32:16",	/* function_align.  */
   "4",		/* jump_align.  */
   "32:16",	/* loop_align.  */

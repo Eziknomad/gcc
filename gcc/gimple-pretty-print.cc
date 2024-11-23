@@ -537,7 +537,7 @@ dump_ternary_rhs (pretty_printer *pp, const gassign *gs, int spc,
       dump_generic_node (pp, gimple_assign_rhs3 (gs), spc, flags, false);
       pp_greater (pp);
       break;
-    
+
     case VEC_PERM_EXPR:
       if (flags & TDF_GIMPLE)
 	pp_string (pp, "__VEC_PERM (");
@@ -740,10 +740,10 @@ dump_gimple_call_args (pretty_printer *pp, const gcall *gs,
 	  static const char *const unique_args[] = {IFN_UNIQUE_CODES};
 #undef DEF
 	  enums = unique_args;
-	  
+
 	  limit = ARRAY_SIZE (unique_args);
 	  break;
-	  
+
 	case IFN_GOACC_LOOP:
 #define DEF(X) #X
 	  static const char *const loop_args[] = {IFN_GOACC_LOOP_CODES};
@@ -1726,6 +1726,35 @@ dump_gimple_omp_scope (pretty_printer *pp, const gimple *gs,
     }
 }
 
+/* Dump a GIMPLE_OMP_DISPATCH tuple on the pretty_printer BUFFER.  */
+
+static void
+dump_gimple_omp_dispatch (pretty_printer *buffer, const gimple *gs, int spc,
+			  dump_flags_t flags)
+{
+  if (flags & TDF_RAW)
+    {
+      dump_gimple_fmt (buffer, spc, flags, "%G <%+BODY <%S>%nCLAUSES <", gs,
+		       gimple_omp_body (gs));
+      dump_omp_clauses (buffer, gimple_omp_dispatch_clauses (gs), spc, flags);
+      dump_gimple_fmt (buffer, spc, flags, " >");
+    }
+  else
+    {
+      pp_string (buffer, "#pragma omp dispatch");
+      dump_omp_clauses (buffer, gimple_omp_dispatch_clauses (gs), spc, flags);
+      if (!gimple_seq_empty_p (gimple_omp_body (gs)))
+	{
+	  newline_and_indent (buffer, spc + 2);
+	  pp_left_brace (buffer);
+	  pp_newline (buffer);
+	  dump_gimple_seq (buffer, gimple_omp_body (gs), spc + 4, flags);
+	  newline_and_indent (buffer, spc + 2);
+	  pp_right_brace (buffer);
+	}
+    }
+}
+
 /* Dump a GIMPLE_OMP_TARGET tuple on the pretty_printer PP.  */
 
 static void
@@ -2362,7 +2391,7 @@ dump_ssaname_info (pretty_printer *pp, tree node, int spc)
   if (!POINTER_TYPE_P (TREE_TYPE (node))
       && SSA_NAME_RANGE_INFO (node))
     {
-      Value_Range r (TREE_TYPE (node));
+      value_range r (TREE_TYPE (node));
       get_global_range_query ()->range_of_expr (r, node);
       pp_string (pp, "# RANGE ");
       pp_vrange (pp, &r);
@@ -2805,6 +2834,10 @@ pp_gimple_stmt_1 (pretty_printer *pp, const gimple *gs, int spc,
       dump_gimple_omp_scope (pp, gs, spc, flags);
       break;
 
+    case GIMPLE_OMP_DISPATCH:
+      dump_gimple_omp_dispatch(pp, gs, spc, flags);
+      break;
+
     case GIMPLE_OMP_MASTER:
     case GIMPLE_OMP_SECTION:
     case GIMPLE_OMP_STRUCTURED_BLOCK:
@@ -3076,7 +3109,7 @@ gimple_dump_bb_buff (pretty_printer *pp, basic_block bb, int indent,
       pp_newline_and_flush (pp);
       gcc_checking_assert (DECL_STRUCT_FUNCTION (current_function_decl));
       dump_histograms_for_stmt (DECL_STRUCT_FUNCTION (current_function_decl),
-				pp_buffer (pp)->stream, stmt);
+				pp_buffer (pp)->m_stream, stmt);
     }
 
   dump_implicit_edges (pp, bb, indent, flags);

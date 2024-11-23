@@ -340,7 +340,7 @@ package body Exp_Ch5 is
       Lhs : constant Node_Id := Name (N);
 
       Act_Lhs : constant Node_Id := Get_Referenced_Object (Lhs);
-      Act_Rhs : Node_Id          := Get_Referenced_Object (Rhs);
+      Act_Rhs : constant Node_Id := Get_Referenced_Object (Rhs);
 
       L_Type : constant Entity_Id :=
                  Underlying_Type (Get_Actual_Subtype (Act_Lhs));
@@ -515,14 +515,9 @@ package body Exp_Ch5 is
          Set_Backwards_OK (N, False);
       end if;
 
-      --  We certainly must use a loop for change of representation and also
-      --  we use the operand of the conversion on the right-hand side as the
-      --  effective right-hand side (the component types must match in this
-      --  situation).
+      --  We certainly must use a loop for change of representation
 
       if Crep then
-         Act_Rhs := Get_Referenced_Object (Rhs);
-         R_Type  := Get_Actual_Subtype (Act_Rhs);
          Loop_Required := True;
 
       --  We require a loop if either side is possibly bit aligned
@@ -2969,9 +2964,9 @@ package body Exp_Ch5 is
       then
          Tagged_Case : declare
             L                   : List_Id := No_List;
-            Expand_Ctrl_Actions : constant Boolean
-                                    := not No_Ctrl_Actions (N)
-                                         and then not No_Finalize_Actions (N);
+            Expand_Ctrl_Actions : constant Boolean :=
+              not No_Ctrl_Actions (N)
+                and then not No_Finalize_Actions (N);
 
          begin
             --  In the controlled case, we ensure that function calls are
@@ -3203,14 +3198,12 @@ package body Exp_Ch5 is
                end if;
 
                --  We need to set up an exception handler for implementing
-               --  7.6.1(18). The remaining adjustments are tackled by the
-               --  implementation of adjust for record_controllers (see
-               --  s-finimp.adb).
-
-               --  This is skipped if we have no finalization
+               --  7.6.1(18), but this is skipped if the type has relaxed
+               --  semantics for finalization.
 
                if Expand_Ctrl_Actions
                  and then not Restriction_Active (No_Finalization)
+                 and then not Has_Relaxed_Finalization (Typ)
                then
                   L := New_List (
                     Make_Block_Statement (Loc,
@@ -3245,29 +3238,32 @@ package body Exp_Ch5 is
               and then Abort_Allowed
             then
                declare
-                  Blk : constant Entity_Id :=
-                          New_Internal_Entity
-                            (E_Block, Current_Scope, Sloc (N), 'B');
                   AUD : constant Entity_Id := RTE (RE_Abort_Undefer_Direct);
+                  HSS : constant Node_Id   := Handled_Statement_Sequence (N);
+
+                  Blk_Id : Entity_Id;
 
                begin
                   Set_Is_Abort_Block (N);
-
-                  Set_Scope (Blk, Current_Scope);
-                  Set_Etype (Blk, Standard_Void_Type);
-                  Set_Identifier (N, New_Occurrence_Of (Blk, Sloc (N)));
+                  Add_Block_Identifier (N, Blk_Id);
 
                   Prepend_To (L, Build_Runtime_Call (Loc, RE_Abort_Defer));
-                  Set_At_End_Proc (Handled_Statement_Sequence (N),
-                    New_Occurrence_Of (AUD, Loc));
 
-                  --  Present the Abort_Undefer_Direct function to the backend
-                  --  so that it can inline the call to the function.
+                  --  Like above, no need to deal with exception propagation
+                  --  if the type has relaxed semantics for finalization.
 
-                  Add_Inlined_Body (AUD, N);
+                  if Has_Relaxed_Finalization (Typ) then
+                     Append_To (L, Build_Runtime_Call (Loc, RE_Abort_Undefer));
 
-                  Expand_At_End_Handler
-                    (Handled_Statement_Sequence (N), Blk);
+                  else
+                     Set_At_End_Proc (HSS, New_Occurrence_Of (AUD, Loc));
+                     Expand_At_End_Handler (HSS, Blk_Id);
+
+                     --  Present Abort_Undefer_Direct procedure to the back end
+                     --  so that it can inline the call to the procedure.
+
+                     Add_Inlined_Body (AUD, N);
+                  end if;
                end;
             end if;
 
@@ -3282,6 +3278,10 @@ package body Exp_Ch5 is
       --  Array types
 
       elsif Is_Array_Type (Typ) then
+         --  We use the operand of a conversion on the right-hand side as the
+         --  effective right-hand side (the component types must match in this
+         --  situation).
+
          declare
             Actual_Rhs : Node_Id := Rhs;
 
@@ -3790,8 +3790,8 @@ package body Exp_Ch5 is
                      pragma Assert (No (Expressions (Pattern)));
 
                      declare
-                        Component_Assoc : Node_Id
-                          := First (Component_Associations (Pattern));
+                        Component_Assoc : Node_Id :=
+                          First (Component_Associations (Pattern));
                         Choice : Node_Id;
 
                         function Subobject return Node_Id is

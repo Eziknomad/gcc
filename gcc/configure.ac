@@ -585,7 +585,6 @@ AC_SUBST(aliasing_flags)
 # * 'long long'
 # * variadic macros
 # * overlong strings
-# * C++11 narrowing conversions in { }
 # So, we only use -pedantic if we can disable those warnings.
 
 # In stage 1, disable -Wformat warnings from old GCCs about new % codes
@@ -595,7 +594,7 @@ AC_ARG_ENABLE(build-format-warnings,
 AS_IF([test $enable_build_format_warnings = no],
       [wf_opt=-Wno-format],[wf_opt=])
 ACX_PROG_CXX_WARNING_OPTS(
-	m4_quote(m4_do([-W -Wall -Wno-narrowing -Wwrite-strings ],
+	m4_quote(m4_do([-W -Wall -Wno-error=narrowing -Wwrite-strings ],
 		       [-Wcast-qual $wf_opt])),
 		       [loose_warn])
 ACX_PROG_CC_WARNING_OPTS(
@@ -697,16 +696,13 @@ do
 done
 IFS="$ac_save_IFS"
 
-nocommon_flag=""
 if test x$ac_checking != x ; then
   AC_DEFINE(CHECKING_P, 1,
 [Define to 0/1 if you want more run-time sanity checks.  This one gets a grab
 bag of miscellaneous but relatively cheap checks.])
-  nocommon_flag=-fno-common
 else
   AC_DEFINE(CHECKING_P, 0)
 fi
-AC_SUBST(nocommon_flag)
 if test x$ac_extra_checking != x ; then
   AC_DEFINE(ENABLE_EXTRA_CHECKING, 1,
 [Define to 0/1 if you want extra run-time checking that might affect code
@@ -1561,7 +1557,17 @@ define(gcc_UNLOCKED_FUNCS, clearerr_unlocked feof_unlocked dnl
 AC_CHECK_FUNCS(times clock kill getrlimit setrlimit atoq \
 	popen sysconf strsignal getrusage nl_langinfo \
 	gettimeofday mbstowcs wcswidth mmap posix_fallocate setlocale \
-	gcc_UNLOCKED_FUNCS madvise mallinfo mallinfo2 fstatat getauxval)
+	gcc_UNLOCKED_FUNCS madvise mallinfo mallinfo2 fstatat getauxval \
+	clock_gettime)
+
+# At least for glibc, clock_gettime is in librt.  But don't pull that
+# in if it still doesn't give us the function we want.
+if test $ac_cv_func_clock_gettime = no; then
+  AC_CHECK_LIB(rt, clock_gettime,
+    [LIBS="-lrt $LIBS"
+     AC_DEFINE(HAVE_CLOCK_GETTIME, 1,
+	       [Define to 1 if you have the `clock_gettime' function.])])
+fi
 
 if test x$ac_cv_func_mbstowcs = xyes; then
   AC_CACHE_CHECK(whether mbstowcs works, gcc_cv_func_mbstowcs_works,
@@ -1633,7 +1639,7 @@ gcc_AC_CHECK_DECLS(getenv atol atoll asprintf sbrk abort atof getcwd getwd \
 	madvise stpcpy strnlen strsignal strverscmp \
 	strtol strtoul strtoll strtoull setenv unsetenv \
 	errno snprintf vsnprintf vasprintf malloc realloc calloc \
-	free getopt clock getpagesize ffs gcc_UNLOCKED_FUNCS, , ,[
+	free getopt clock getpagesize ffs fmemopen gcc_UNLOCKED_FUNCS, , ,[
 #include "ansidecl.h"
 #include "system.h"])
 
@@ -3054,6 +3060,11 @@ case "${target}" in
     ;;
 esac
 
+gcc_GAS_CHECK_FEATURE([.base64], gcc_cv_as_base64,,
+ [	.section .rodata
+ 	.base64 "Tm9uIHB1ZG9yIGVzdCBuaWwgc2NpcmUsIHB1ZG9yIG5pbCBkaXNjZXJlIHZlbGxlLgo="],,
+[AC_DEFINE(HAVE_GAS_BASE64, 1, [Define if your assembler supports .base64.])])
+
 # gnu_indirect_function type is an extension proposed at
 # http://groups.google/com/group/generic-abi/files. It allows dynamic runtime
 # selection of function implementation
@@ -4391,14 +4402,14 @@ case "$target" in
     AC_ARG_ENABLE(standard-branch-protection,
     [
 AS_HELP_STRING([--enable-standard-branch-protection],
-        [enable Branch Target Identification Mechanism and Return Address Signing by default for AArch64])
+        [enable Branch Target Identification Mechanism, Return Address Signing, and Guarded Control Stack by default for AArch64])
 AS_HELP_STRING([--disable-standard-branch-protection],
-        [disable Branch Target Identification Mechanism and Return Address Signing by default for AArch64])
+        [disable Branch Target Identification Mechanism, Return Address Signing, and Guarded Control Stack by default for AArch64])
     ],
       [
         case $enableval in
           yes)
-            tm_defines="${tm_defines} TARGET_ENABLE_BTI=1 TARGET_ENABLE_PAC_RET=1"
+            tm_defines="${tm_defines} TARGET_ENABLE_BTI=1 TARGET_ENABLE_PAC_RET=1 TARGET_ENABLE_GCS=1"
             ;;
           no)
             ;;
@@ -5255,6 +5266,8 @@ LCF0:
 [	lw $4,%gp_rel(foo)($4)],,
       [AC_DEFINE(MIPS_EXPLICIT_RELOCS, MIPS_EXPLICIT_RELOCS_BASE,
 		 [Define if assembler supports %reloc.])])
+    else
+      gcc_cv_as_mips_explicit_relocs=yes
     fi
 
     if test x$gcc_cv_as_mips_explicit_relocs = xno; then \
@@ -5452,6 +5465,16 @@ configured with --enable-newlib-nano-formatted-io.])
       [-march=rv32i_zifencei2p0],,,
       [AC_DEFINE(HAVE_AS_MARCH_ZIFENCEI, 1,
 		 [Define if the assembler understands -march=rv*_zifencei.])])
+    gcc_GAS_CHECK_FEATURE([-march=rv32i_zaamo_zalrsc support],
+      gcc_cv_as_riscv_march_zaamo_zalrsc,
+      [-march=rv32i_zaamo_zalrsc],,,
+      [AC_DEFINE(HAVE_AS_MARCH_ZAAMO_ZALRSC, 1,
+		 [Define if the assembler understands -march=rv*_zaamo_zalrsc.])])
+    gcc_GAS_CHECK_FEATURE([-march=rv32i_b support],
+      gcc_cv_as_riscv_march_b,
+      [-march=rv32i_b],,,
+      [AC_DEFINE(HAVE_AS_MARCH_B, 1,
+		 [Define if the assembler understands -march=rv*_b.])])
     ;;
     loongarch*-*-*)
     gcc_GAS_CHECK_FEATURE([.dtprelword support],
@@ -5596,7 +5619,7 @@ esac
 case "$cpu_type" in
   aarch64 | alpha | arc | arm | avr | bfin | cris | csky | i386 | loongarch | m32c \
   | m68k | microblaze | mips | nds32 | nios2 | pa | riscv | rs6000 | score | sparc \
-  | visium | xstormy16 | xtensa)
+  | visium | xstormy16 | xtensa | ft32)
     insn="nop"
     ;;
   ia64 | s390)
@@ -7357,6 +7380,9 @@ for language in $all_selected_languages
 do
 	check_languages="$check_languages check-$language"
 done
+if test x$enable_libdiagnostics = xyes; then
+	check_languages="$check_languages check-libdiagnostics check-sarif-replay"
+fi
 
 selftest_languages=
 for language in $all_selected_languages
@@ -7588,6 +7614,19 @@ AC_ARG_ENABLE(host-pie,
 [AS_HELP_STRING([--enable-host-pie],
 		[build host code as PIE])])
 AC_SUBST(enable_host_pie)
+
+AC_ARG_ENABLE(libdiagnostics,
+[AS_HELP_STRING([--enable-libdiagnostics],
+		[build libdiagnostics shared library])])
+AC_SUBST(enable_libdiagnostics)
+
+if test "$enable_libdiagnostics" = "yes"; then
+  LIBDIAGNOSTICS='libdiagnostics sarif-replay'
+else
+  LIBDIAGNOSTICS=''
+fi
+AC_SUBST(LIBDIAGNOSTICS)
+
 
 # Enable --enable-host-bind-now
 AC_ARG_ENABLE(host-bind-now,

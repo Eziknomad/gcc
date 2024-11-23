@@ -78,7 +78,7 @@ gimple_range_type (const gimple *s)
 	    type = TREE_TYPE (type);
 	}
     }
-  if (type && Value_Range::supports_type_p (type))
+  if (type && value_range::supports_type_p (type))
     return type;
   return NULL_TREE;
 }
@@ -91,7 +91,7 @@ gimple_range_ssa_p (tree exp)
   if (exp && TREE_CODE (exp) == SSA_NAME &&
       !SSA_NAME_IS_VIRTUAL_OPERAND (exp) &&
       !SSA_NAME_OCCURS_IN_ABNORMAL_PHI (exp) &&
-      Value_Range::supports_type_p (TREE_TYPE (exp)))
+      value_range::supports_type_p (TREE_TYPE (exp)))
     return exp;
   return NULL_TREE;
 }
@@ -148,6 +148,20 @@ public:
 				  tree op2) override;
   virtual void register_relation (edge e, relation_kind k, tree op1,
 				  tree op2) override;
+};
+
+
+// This version of fur_source will pick a range up off an edge.
+
+class fur_edge : public fur_source
+{
+public:
+  fur_edge (edge e, range_query *q = NULL) : fur_source (q)
+    { m_edge = e; }
+  virtual bool get_operand (vrange &r, tree expr) override;
+  virtual bool get_phi_operand (vrange &r, tree expr, edge e) override;
+private:
+  edge m_edge;
 };
 
 // This class uses ranges to fold a gimple statement producing a range for

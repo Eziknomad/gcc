@@ -2484,7 +2484,7 @@ package body Sem_Warn is
          Item := First (Context_Items (Cnode));
          while Present (Item) loop
             if Nkind (Item) = N_With_Clause
-              and then not Implicit_With (Item)
+              and then not Is_Implicit_With (Item)
               and then In_Extended_Main_Source_Unit (Item)
 
               --  Guard for no entity present. Not clear under what conditions
@@ -2583,13 +2583,16 @@ package body Sem_Warn is
 
                         if No (Ent) then
 
+                           --  Check entities in the extended system if
+                           --  specified.
+
+                           if Check_System_Aux (Lunit) then
+                              null;
+
                            --  If in spec, just set the flag
 
-                           if Unit = Spec_Unit then
+                           elsif Unit = Spec_Unit then
                               Set_No_Entities_Ref_In_Spec (Item);
-
-                           elsif Check_System_Aux (Lunit) then
-                              null;
 
                            --  Else the warning may be needed
 
@@ -3161,49 +3164,50 @@ package body Sem_Warn is
 
       elsif Nkind (P) = N_Procedure_Call_Statement then
          Error_Msg_NE
-           ("??call to obsolescent procedure& declared#", N, E);
+           ("?j?call to obsolescent procedure& declared#", N, E);
 
       --  Function call
 
       elsif Nkind (P) = N_Function_Call then
          Error_Msg_NE
-           ("??call to obsolescent function& declared#", N, E);
+           ("?j?call to obsolescent function& declared#", N, E);
 
       --  Reference to obsolescent type
 
       elsif Is_Type (E) then
          Error_Msg_NE
-           ("??reference to obsolescent type& declared#", N, E);
+           ("?j?reference to obsolescent type& declared#", N, E);
 
       --  Reference to obsolescent component
 
       elsif Ekind (E) in E_Component | E_Discriminant then
          Error_Msg_NE
-           ("??reference to obsolescent component& declared#", N, E);
+           ("?j?reference to obsolescent component& declared#", N, E);
 
       --  Reference to obsolescent variable
 
       elsif Ekind (E) = E_Variable then
          Error_Msg_NE
-           ("??reference to obsolescent variable& declared#", N, E);
+           ("?j?reference to obsolescent variable& declared#", N, E);
 
       --  Reference to obsolescent constant
 
       elsif Ekind (E) = E_Constant or else Ekind (E) in Named_Kind then
          Error_Msg_NE
-           ("??reference to obsolescent constant& declared#", N, E);
+           ("?j?reference to obsolescent constant& declared#", N, E);
 
       --  Reference to obsolescent enumeration literal
 
       elsif Ekind (E) = E_Enumeration_Literal then
          Error_Msg_NE
-           ("??reference to obsolescent enumeration literal& declared#", N, E);
+           ("?j?reference to obsolescent enumeration literal& declared#",
+            N, E);
 
       --  Generic message for any other case we missed
 
       else
          Error_Msg_NE
-           ("??reference to obsolescent entity& declared#", N, E);
+           ("?j?reference to obsolescent entity& declared#", N, E);
       end if;
 
       --  Output additional warning if present
@@ -3213,7 +3217,7 @@ package body Sem_Warn is
             String_To_Name_Buffer (Obsolescent_Warnings.Table (J).Msg);
             Error_Msg_Strlen := Name_Len;
             Error_Msg_String (1 .. Name_Len) := Name_Buffer (1 .. Name_Len);
-            Error_Msg_N ("\\??~", N);
+            Error_Msg_N ("\\?j?~", N);
             exit;
          end if;
       end loop;
@@ -3510,15 +3514,15 @@ package body Sem_Warn is
                      Error_Msg_Sloc := Sloc (CV);
 
                      if Nkind (CV) not in N_Subexpr then
-                        Error_Msg_N ("\\??(see test #)", N);
+                        Error_Msg_N ("\\?c?(see test #)", N);
 
                      elsif Nkind (Parent (CV)) =
                              N_Case_Statement_Alternative
                      then
-                        Error_Msg_N ("\\??(see case alternative #)", N);
+                        Error_Msg_N ("\\?c?(see case alternative #)", N);
 
                      else
-                        Error_Msg_N ("\\??(see assignment #)", N);
+                        Error_Msg_N ("\\?c?(see assignment #)", N);
                      end if;
                   end if;
                end;

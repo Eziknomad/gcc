@@ -22,6 +22,8 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "rich-location.h"
 
+class diagnostic_source_print_policy;
+
 /* A gcc_rich_location is libcpp's rich_location with additional
    helper methods for working with gcc's types.  The class is not
    copyable or assignable because rich_location isn't. */
@@ -32,17 +34,29 @@ class gcc_rich_location : public rich_location
   /* Constructors.  */
 
   /* Constructing from a location.  */
-  explicit gcc_rich_location (location_t loc, const range_label *label = NULL)
-  : rich_location (line_table, loc, label)
+  explicit gcc_rich_location (location_t loc)
+    : rich_location (line_table, loc, nullptr, nullptr)
+  {
+  }
+
+  /* Constructing from a location with a label and a highlight color.  */
+  explicit gcc_rich_location (location_t loc,
+			      const range_label *label,
+			      const char *highlight_color)
+    : rich_location (line_table, loc, label, highlight_color)
   {
   }
 
   /* Methods for adding ranges via gcc entities.  */
   void
-  add_expr (tree expr, range_label *label);
+  add_expr (tree expr,
+	    range_label *label,
+	    const char *highlight_color);
 
   void
-  maybe_add_expr (tree t, range_label *label);
+  maybe_add_expr (tree t,
+		  range_label *label,
+		  const char *highlight_color);
 
   void add_fixit_misspelled_id (location_t misspelled_token_loc,
 				tree hint_id);
@@ -59,14 +73,21 @@ class gcc_rich_location : public rich_location
      printing them via a note otherwise e.g.:
 
 	gcc_rich_location richloc (primary_loc);
-	bool added secondary = richloc.add_location_if_nearby (secondary_loc);
+	bool added secondary = richloc.add_location_if_nearby (*global_dc,
+							       secondary_loc);
 	error_at (&richloc, "main message");
 	if (!added secondary)
 	  inform (secondary_loc, "message for secondary");
 
      Implemented in diagnostic-show-locus.cc.  */
 
-  bool add_location_if_nearby (location_t loc,
+  bool add_location_if_nearby (const diagnostic_source_print_policy &policy,
+			       location_t loc,
+			       bool restrict_to_current_line_spans = true,
+			       const range_label *label = NULL);
+
+  bool add_location_if_nearby (const diagnostic_context &dc,
+			       location_t loc,
 			       bool restrict_to_current_line_spans = true,
 			       const range_label *label = NULL);
 
@@ -105,23 +126,6 @@ class gcc_rich_location : public rich_location
   void add_fixit_insert_formatted (const char *content,
 				   location_t insertion_point,
 				   location_t indent);
-};
-
-/* Concrete subclass of libcpp's range_label.
-   Simple implementation using a string literal.  */
-
-class text_range_label : public range_label
-{
- public:
-  text_range_label (const char *text) : m_text (text) {}
-
-  label_text get_text (unsigned /*range_idx*/) const final override
-  {
-    return label_text::borrow (m_text);
-  }
-
- private:
-  const char *m_text;
 };
 
 #endif /* GCC_RICH_LOCATION_H */

@@ -106,6 +106,8 @@ static const sve_vec_cost generic_armv8_a_sve_vector_cost =
   2, /* fadda_f64_cost  */
   4, /* gather_load_x32_cost  */
   2, /* gather_load_x64_cost  */
+  12, /* gather_load_x32_init_cost  */
+  4, /* gather_load_x64_init_cost  */
   1 /* scatter_store_elt_cost  */
 };
 
@@ -167,7 +169,7 @@ static const struct tune_params generic_armv8_a_tunings =
     4 /* store_pred.  */
   }, /* memmov_cost.  */
   3, /* issue_rate  */
-  (AARCH64_FUSE_AES_AESMC | AARCH64_FUSE_CMP_BRANCH), /* fusible_ops  */
+  AARCH64_FUSE_BASE, /* fusible_ops  */
   "32:16",	/* function_align.  */
   "4",		/* jump_align.  */
   "32:16",	/* loop_align.  */

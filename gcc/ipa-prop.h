@@ -306,7 +306,7 @@ public:
   void set_unknown ();
   bool known_p () const { return m_storage != NULL; }
   tree type () const { return m_type; }
-  void get_vrange (Value_Range &) const;
+  void get_vrange (value_range &) const;
   bool equal_p (const vrange &) const;
   bool equal_p (const ipa_vr &) const;
   const vrange_storage *storage () const { return m_storage; }
@@ -521,7 +521,7 @@ public:
   auto_vec<ipa_argagg_value, 32> m_known_aggs;
 
   /* Vector describing known value ranges of arguments.  */
-  auto_vec<Value_Range, 32> m_known_value_ranges;
+  auto_vec<value_range, 32> m_known_value_ranges;
 };
 
 inline
@@ -573,7 +573,7 @@ public:
   vec<ipa_argagg_value> m_known_aggs = vNULL;
 
   /* Vector describing known value ranges of arguments.  */
-  vec<Value_Range> m_known_value_ranges = vNULL;
+  vec<value_range> m_known_value_ranges = vNULL;
 };
 
 inline
@@ -1179,6 +1179,7 @@ ipcp_get_transformation_summary (cgraph_node *node)
 
 /* Function formal parameters related computations.  */
 void ipa_initialize_node_params (struct cgraph_node *node);
+void ipa_print_constant_value (FILE *f, tree val);
 bool ipa_propagate_indirect_call_infos (struct cgraph_edge *cs,
 					vec<cgraph_edge *> *new_edges);
 
@@ -1247,6 +1248,8 @@ void ipa_push_agg_values_from_jfunc (ipa_node_params *info, cgraph_node *node,
 				     unsigned dst_index,
 				     vec<ipa_argagg_value> *res);
 void ipa_dump_param (FILE *, class ipa_node_params *info, int i);
+void ipa_dump_jump_function (FILE *f, ipa_jump_func *jfunc,
+			     class ipa_polymorphic_call_context *ctx = NULL);
 void ipa_release_body_info (struct ipa_func_body_info *);
 tree ipa_get_callee_param_type (struct cgraph_edge *e, int i);
 bool ipcp_get_parm_bits (tree, tree *, widest_int *);
@@ -1277,8 +1280,8 @@ ipa_range_set_and_normalize (vrange &r, tree val)
     r.set (val, val);
 }
 
-bool ipa_return_value_range (Value_Range &range, tree decl);
-void ipa_record_return_value_range (Value_Range val);
+bool ipa_return_value_range (value_range &range, tree decl);
+void ipa_record_return_value_range (value_range val);
 bool ipa_jump_functions_equivalent_p (ipa_jump_func *jf1, ipa_jump_func *jf2);
 
 

@@ -48,10 +48,7 @@ get_bitmask_from_range (tree type,
     }
 
   wide_int xorv = min ^ max;
-
-  if (xorv != 0)
-    xorv = wi::mask (prec - wi::clz (xorv), false, prec);
-
+  xorv = wi::mask (prec - wi::clz (xorv), false, prec);
   return irange_bitmask (wi::zero (prec), min | xorv);
 }
 
@@ -62,7 +59,7 @@ irange::accept (const vrange_visitor &v) const
 }
 
 void
-Value_Range::dump (FILE *out) const
+value_range::dump (FILE *out) const
 {
   if (m_vrange)
     m_vrange->dump (out);
@@ -71,7 +68,7 @@ Value_Range::dump (FILE *out) const
 }
 
 DEBUG_FUNCTION void
-debug (const Value_Range &r)
+debug (const value_range &r)
 {
   r.dump (stderr);
   fprintf (stderr, "\n");

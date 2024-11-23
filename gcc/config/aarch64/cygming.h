@@ -21,18 +21,29 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_AARCH64_CYGMING_H
 #define GCC_AARCH64_CYGMING_H
 
+#define DWARF2_DEBUGGING_INFO 1
+
 #undef PREFERRED_DEBUGGING_TYPE
-#define PREFERRED_DEBUGGING_TYPE DINFO_TYPE_NONE
+#define PREFERRED_DEBUGGING_TYPE DWARF2_DEBUG
+
+#undef DWARF2_UNWIND_INFO
+#define DWARF2_UNWIND_INFO 0
 
 #define FASTCALL_PREFIX '@'
 
 #define print_reg(rtx, code, file) (gcc_unreachable ())
 
-#define SYMBOL_FLAG_DLLIMPORT 0
-#define SYMBOL_FLAG_DLLEXPORT 0
+#define SYMBOL_FLAG_DLLIMPORT		(SYMBOL_FLAG_MACH_DEP << 0)
+#define SYMBOL_REF_DLLIMPORT_P(X) \
+	((SYMBOL_REF_FLAGS (X) & SYMBOL_FLAG_DLLIMPORT) != 0)
 
+#define SYMBOL_FLAG_DLLEXPORT		(SYMBOL_FLAG_MACH_DEP << 1)
 #define SYMBOL_REF_DLLEXPORT_P(X) \
 	((SYMBOL_REF_FLAGS (X) & SYMBOL_FLAG_DLLEXPORT) != 0)
+
+#define SYMBOL_FLAG_STUBVAR	(SYMBOL_FLAG_MACH_DEP << 2)
+#define SYMBOL_REF_STUBVAR_P(X) \
+	((SYMBOL_REF_FLAGS (X) & SYMBOL_FLAG_STUBVAR) != 0)
 
 /* Disable SEH and declare the required SEH-related macros that are
 still needed for compilation.  */
@@ -51,10 +62,6 @@ still needed for compilation.  */
 #include <stdio.h>
 #endif
 
-extern void mingw_pe_asm_named_section (const char *, unsigned int, tree);
-extern void mingw_pe_declare_function_type (FILE *file, const char *name,
-	int pub);
-
 #define TARGET_ASM_NAMED_SECTION  mingw_pe_asm_named_section
 
 /* Select attributes for named sections.  */
@@ -63,9 +70,47 @@ extern void mingw_pe_declare_function_type (FILE *file, const char *name,
 #define TARGET_ASM_UNIQUE_SECTION mingw_pe_unique_section
 #define TARGET_ENCODE_SECTION_INFO  mingw_pe_encode_section_info
 
+#define TARGET_VALID_DLLIMPORT_ATTRIBUTE_P mingw_pe_valid_dllimport_attribute_p
+
+/* Output function declarations at the end of the file.  */
+#undef TARGET_ASM_FILE_END
+#define TARGET_ASM_FILE_END mingw_pe_file_end
+
 /* Declare the type properly for any external libcall.  */
 #define ASM_OUTPUT_EXTERNAL_LIBCALL(FILE, FUN) \
-  mingw_pe_declare_function_type (FILE, XSTR (FUN, 0), 1)
+  mingw_pe_declare_type (FILE, XSTR (FUN, 0), 1, 1)
+
+/* Use section relative relocations for debugging offsets.  Unlike
+   other targets that fake this by putting the section VMA at 0, PE
+   won't allow it.  */
+#define ASM_OUTPUT_DWARF_OFFSET(FILE, SIZE, LABEL, OFFSET, SECTION) \
+  do {								\
+    switch (SIZE)						\
+      {								\
+      case 4:							\
+	fputs ("\t.secrel32\t", FILE);				\
+	assemble_name (FILE, LABEL);				\
+	if ((OFFSET) != 0)					\
+	  fprintf (FILE, "+" HOST_WIDE_INT_PRINT_DEC,		\
+		   (HOST_WIDE_INT) (OFFSET));			\
+	break;							\
+      case 8:							\
+	/* This is a hack.  There is no 64-bit section relative	\
+	   relocation.  However, the COFF format also does not	\
+	   support 64-bit file offsets; 64-bit applications are	\
+	   limited to 32-bits of code+data in any one module.	\
+	   Fake the 64-bit offset by zero-extending it.  */	\
+	fputs ("\t.secrel32\t", FILE);				\
+	assemble_name (FILE, LABEL);				\
+	if ((OFFSET) != 0)					\
+	  fprintf (FILE, "+" HOST_WIDE_INT_PRINT_DEC,		\
+		   (HOST_WIDE_INT) (OFFSET));			\
+	fputs ("\n\t.long\t0", FILE);				\
+	break;							\
+      default:							\
+	gcc_unreachable ();					\
+      }								\
+  } while (0)
 
 #define TARGET_OS_CPP_BUILTINS()					\
   do									\
@@ -158,8 +203,31 @@ extern void mingw_pe_declare_function_type (FILE *file, const char *name,
     flag_stack_check = STATIC_BUILTIN_STACK_CHECK;	\
   } while (0)
 
+#define SUBTARGET_ATTRIBUTE_TABLE \
+  { "selectany", 0, 0, true, false, false, false, \
+    mingw_handle_selectany_attribute, NULL }
+
+#undef SUB_TARGET_RECORD_STUB
+#define SUB_TARGET_RECORD_STUB(NAME, DECL) mingw_pe_record_stub((NAME), \
+  DECL_WEAK ((DECL)))
 
 #define SUPPORTS_ONE_ONLY 1
+
+#undef ASM_DECLARE_OBJECT_NAME
+#define ASM_DECLARE_OBJECT_NAME(STREAM, NAME, DECL)			\
+  do {									\
+    mingw_pe_declare_type (STREAM, NAME, TREE_PUBLIC (DECL), 0);	\
+    ASM_OUTPUT_LABEL ((STREAM), (NAME));				\
+  } while (0)
+
+
+#undef ASM_DECLARE_FUNCTION_NAME
+#define ASM_DECLARE_FUNCTION_NAME(STREAM, NAME, DECL)	\
+  do {									\
+    mingw_pe_declare_type (STREAM, NAME, TREE_PUBLIC (DECL), 1);	\
+    aarch64_declare_function_name (STREAM, NAME, DECL);			\
+  } while (0)
+
 
 /* Define this to be nonzero if static stack checking is supported.  */
 #define STACK_CHECK_STATIC_BUILTIN 1
@@ -168,5 +236,19 @@ extern void mingw_pe_declare_function_type (FILE *file, const char *name,
 
 #undef MAX_OFILE_ALIGNMENT
 #define MAX_OFILE_ALIGNMENT (8192 * 8)
+
+#undef GOT_ALIAS_SET
+#define GOT_ALIAS_SET mingw_GOT_alias_set ()
+
+#define PE_COFF_LEGITIMIZE_EXTERN_DECL(RTX) \
+  (GET_CODE (RTX) == SYMBOL_REF && SYMBOL_REF_WEAK (RTX))
+
+#define HAVE_64BIT_POINTERS 1
+
+/* Kludge because of missing PE-COFF support for early LTO debug.  */
+#undef  TARGET_ASM_LTO_START
+#define TARGET_ASM_LTO_START mingw_pe_asm_lto_start
+#undef  TARGET_ASM_LTO_END
+#define TARGET_ASM_LTO_END mingw_pe_asm_lto_end
 
 #endif

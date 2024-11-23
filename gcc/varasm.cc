@@ -355,17 +355,20 @@ get_section (const char *name, unsigned int flags, tree decl,
 	      && decl != sect->named.decl)
 	    {
 	      if (decl != NULL && DECL_P (decl))
-		error ("%+qD causes a section type conflict with %qD",
-		       decl, sect->named.decl);
+		error ("%+qD causes a section type conflict with %qD"
+		       " in section %qs",
+		       decl, sect->named.decl, name);
 	      else
-		error ("section type conflict with %qD", sect->named.decl);
+		error ("section type conflict with %qD in section %qs",
+		       sect->named.decl, name);
 	      inform (DECL_SOURCE_LOCATION (sect->named.decl),
 		      "%qD was declared here", sect->named.decl);
 	    }
 	  else if (decl != NULL && DECL_P (decl))
-	    error ("%+qD causes a section type conflict", decl);
+	    error ("%+qD causes a section type conflict for section %qs",
+		   decl, name);
 	  else
-	    error ("section type conflict");
+	    error ("section type conflict for section %qs", name);
 	  /* Make sure we don't error about one section multiple times.  */
 	  sect->common.flags |= SECTION_OVERRIDE;
 	}
@@ -2101,7 +2104,19 @@ void
 assemble_string (const char *p, int size)
 {
   int pos = 0;
+#if defined(BASE64_ASM_OP) \
+    && BITS_PER_UNIT == 8 \
+    && CHAR_BIT == 8 \
+    && 'A' == 65 \
+    && 'a' == 97 \
+    && '0' == 48 \
+    && '+' == 43 \
+    && '/' == 47 \
+    && '=' == 61
+  int maximum = 16384;
+#else
   int maximum = 2000;
+#endif
 
   /* If the string is very long, split it up.  */
 
@@ -2563,6 +2578,7 @@ process_pending_assemble_externals (void)
   pending_assemble_externals_processed = true;
   pending_libcall_symbols = NULL_RTX;
   delete pending_assemble_externals_set;
+  pending_assemble_externals_set = nullptr;
 #endif
 }
 
@@ -3182,6 +3198,11 @@ const_hash_1 (const tree exp)
 	return hi;
       }
 
+    case RAW_DATA_CST:
+      p = RAW_DATA_POINTER (exp);
+      len = RAW_DATA_LENGTH (exp);
+      break;
+
     case CONSTRUCTOR:
       {
 	unsigned HOST_WIDE_INT idx;
@@ -3314,7 +3335,7 @@ compare_constant (const tree t1, const tree t2)
 
       return (TREE_STRING_LENGTH (t1) == TREE_STRING_LENGTH (t2)
 	      && ! memcmp (TREE_STRING_POINTER (t1), TREE_STRING_POINTER (t2),
-			 TREE_STRING_LENGTH (t1)));
+			   TREE_STRING_LENGTH (t1)));
 
     case COMPLEX_CST:
       return (compare_constant (TREE_REALPART (t1), TREE_REALPART (t2))
@@ -3338,6 +3359,11 @@ compare_constant (const tree t1, const tree t2)
 
 	return true;
       }
+
+    case RAW_DATA_CST:
+      return (RAW_DATA_LENGTH (t1) == RAW_DATA_LENGTH (t2)
+	      && ! memcmp (RAW_DATA_POINTER (t1), RAW_DATA_POINTER (t2),
+			   RAW_DATA_LENGTH (t1)));
 
     case CONSTRUCTOR:
       {
@@ -4221,7 +4247,7 @@ output_constant_pool_1 (class constant_descriptor_rtx *desc,
   /* Output the data.
      Pass actual alignment value while emitting string constant to asm code
      as function 'output_constant_pool_1' explicitly passes the alignment as 1
-     assuming that the data is already aligned which prevents the generation 
+     assuming that the data is already aligned which prevents the generation
      of fix-up table entries.  */
   output_constant_pool_2 (desc->mode, x, desc->align);
 
@@ -4875,6 +4901,7 @@ initializer_constant_valid_p_1 (tree value, tree endtype, tree *cache)
     case FIXED_CST:
     case STRING_CST:
     case COMPLEX_CST:
+    case RAW_DATA_CST:
       return null_pointer_node;
 
     case ADDR_EXPR:
@@ -5468,6 +5495,9 @@ array_size_for_constructor (tree val)
     {
       if (TREE_CODE (index) == RANGE_EXPR)
 	index = TREE_OPERAND (index, 1);
+      if (value && TREE_CODE (value) == RAW_DATA_CST)
+	index = size_binop (PLUS_EXPR, index,
+			    bitsize_int (RAW_DATA_LENGTH (value) - 1));
       if (max_index == NULL_TREE || tree_int_cst_lt (max_index, index))
 	max_index = index;
     }
@@ -5659,6 +5689,12 @@ output_constructor_regular_field (oc_local_state *local)
   /* Output the element's initial value.  */
   if (local->val == NULL_TREE)
     assemble_zeros (fieldsize);
+  else if (local->val && TREE_CODE (local->val) == RAW_DATA_CST)
+    {
+      fieldsize *= RAW_DATA_LENGTH (local->val);
+      assemble_string (RAW_DATA_POINTER (local->val),
+		       RAW_DATA_LENGTH (local->val));
+    }
   else
     fieldsize = output_constant (local->val, fieldsize, align2,
 				 local->reverse, false);
@@ -6851,6 +6887,9 @@ default_section_type_flags (tree decl, const char *name, int reloc)
 
   if (decl && TREE_CODE (decl) == FUNCTION_DECL)
     flags = SECTION_CODE;
+  else if (strcmp (name, ".data.rel.ro") == 0
+	   || strcmp (name, ".data.rel.ro.local") == 0)
+    flags = SECTION_WRITE | SECTION_RELRO;
   else if (decl)
     {
       enum section_category category
@@ -6864,12 +6903,7 @@ default_section_type_flags (tree decl, const char *name, int reloc)
 	flags = SECTION_WRITE;
     }
   else
-    {
-      flags = SECTION_WRITE;
-      if (strcmp (name, ".data.rel.ro") == 0
-	  || strcmp (name, ".data.rel.ro.local") == 0)
-	flags |= SECTION_RELRO;
-    }
+    flags = SECTION_WRITE;
 
   if (decl && DECL_P (decl) && DECL_COMDAT_GROUP (decl))
     flags |= SECTION_LINKONCE;
@@ -7801,6 +7835,8 @@ decl_binds_to_current_def_p (const_tree decl)
      for all other declaration types.  */
   if (DECL_WEAK (decl))
     return false;
+  if (DECL_COMDAT_GROUP (decl))
+    return false;
   if (DECL_COMMON (decl)
       && (DECL_INITIAL (decl) == NULL
 	  || (!in_lto_p && DECL_INITIAL (decl) == error_mark_node)))
@@ -8454,8 +8490,7 @@ default_elf_asm_output_limited_string (FILE *f, const char *s)
   int escape;
   unsigned char c;
 
-  fputs (STRING_ASM_OP, f);
-  putc ('"', f);
+  fputs (STRING_ASM_OP "\"", f);
   while (*s != '\0')
     {
       c = *s;
@@ -8489,9 +8524,11 @@ default_elf_asm_output_ascii (FILE *f, const char *s, unsigned int len)
 {
   const char *limit = s + len;
   const char *last_null = NULL;
+  const char *last_base64 = s;
   unsigned bytes_in_chunk = 0;
   unsigned char c;
   int escape;
+  bool prev_base64 = false;
 
   for (; s < limit; s++)
     {
@@ -8504,7 +8541,7 @@ default_elf_asm_output_ascii (FILE *f, const char *s, unsigned int len)
 	  bytes_in_chunk = 0;
 	}
 
-      if (s > last_null)
+      if ((uintptr_t) s > (uintptr_t) last_null)
 	{
 	  for (p = s; p < limit && *p != '\0'; p++)
 	    continue;
@@ -8512,6 +8549,112 @@ default_elf_asm_output_ascii (FILE *f, const char *s, unsigned int len)
 	}
       else
 	p = last_null;
+
+#if defined(BASE64_ASM_OP) \
+    && BITS_PER_UNIT == 8 \
+    && CHAR_BIT == 8 \
+    && 'A' == 65 \
+    && 'a' == 97 \
+    && '0' == 48 \
+    && '+' == 43 \
+    && '/' == 47 \
+    && '=' == 61
+      if (s >= last_base64)
+	{
+	  unsigned cnt = 0;
+	  unsigned char prev_c = ' ';
+	  const char *t;
+	  for (t = s; t < limit && (t - s) < (long) ELF_STRING_LIMIT - 1; t++)
+	    {
+	      if (t == p && t != s)
+		{
+		  if (cnt <= ((unsigned) (t - s) + 1 + 2) / 3 * 4
+		      && (!prev_base64 || (t - s) >= 16)
+		      && ((t - s) > 1 || cnt <= 2))
+		    {
+		      last_base64 = p;
+		      goto no_base64;
+		    }
+		}
+	      c = *t;
+	      escape = ELF_ASCII_ESCAPES[c];
+	      switch (escape)
+		{
+		case 0:
+		  ++cnt;
+		  break;
+		case 1:
+		  if (c == 0)
+		    {
+		      if (prev_c == 0
+			  && t + 1 < limit
+			  && (t + 1 - s) < (long) ELF_STRING_LIMIT - 1)
+			break;
+		      cnt += 2 + strlen (STRING_ASM_OP) + 1;
+		    }
+		  else
+		    cnt += 4;
+		  break;
+		default:
+		  cnt += 2;
+		  break;
+		}
+	      prev_c = c;
+	    }
+	  if (cnt > ((unsigned) (t - s) + 2) / 3 * 4 && (t - s) >= 3)
+	    {
+	      if (bytes_in_chunk > 0)
+		{
+		  putc ('\"', f);
+		  putc ('\n', f);
+		  bytes_in_chunk = 0;
+		}
+
+	      unsigned char buf[(ELF_STRING_LIMIT + 2) / 3 * 4 + 3];
+	      unsigned j = 0;
+	      static const char base64_enc[] =
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+		"0123456789+/";
+
+	      fputs (BASE64_ASM_OP "\"", f);
+	      while (s < t)
+		{
+		  unsigned char a = *s;
+		  unsigned char b = 0, c = 0;
+		  if (s < t - 1)
+		    b = s[1];
+		  if (s < t - 2)
+		    c = s[2];
+		  unsigned long v = ((((unsigned long) a) << 16)
+				     | (((unsigned long) b) << 8)
+				     | c);
+		  buf[j++] = base64_enc[(v >> 18) & 63];
+		  buf[j++] = base64_enc[(v >> 12) & 63];
+		  buf[j++] = base64_enc[(v >> 6) & 63];
+		  buf[j++] = base64_enc[v & 63];
+		  if (s >= t - 2)
+		    {
+		      buf[j - 1] = '=';
+		      if (s >= t - 1)
+			buf[j - 2] = '=';
+		      break;
+		    }
+		  s += 3;
+		}
+	      memcpy (buf + j, "\"\n", 3);
+	      fputs ((const char *) buf, f);
+	      s = t - 1;
+	      prev_base64 = true;
+	      continue;
+	    }
+	  last_base64 = t;
+	no_base64:
+	  prev_base64 = false;
+	}
+#else
+      (void) last_base64;
+      (void) prev_base64;
+#endif
 
       if (p < limit && (p - s) <= (long) ELF_STRING_LIMIT)
 	{
@@ -8522,8 +8665,18 @@ default_elf_asm_output_ascii (FILE *f, const char *s, unsigned int len)
 	      bytes_in_chunk = 0;
 	    }
 
-	  default_elf_asm_output_limited_string (f, s);
-	  s = p;
+	  if (p == s && p + 1 < limit && p[1] == '\0')
+	    {
+	      for (p = s + 2; p < limit && *p == '\0'; p++)
+		continue;
+	      ASM_OUTPUT_SKIP (f, (unsigned HOST_WIDE_INT) (p - s));
+	      s = p - 1;
+	    }
+	  else
+	    {
+	      default_elf_asm_output_limited_string (f, s);
+	      s = p;
+	    }
 	}
       else
 	{
@@ -8574,7 +8727,7 @@ get_elf_initfini_array_priority_section (int priority,
   if (priority != DEFAULT_INIT_PRIORITY)
     {
       char buf[18];
-      sprintf (buf, "%s.%.5u", 
+      sprintf (buf, "%s.%.5u",
 	       constructor_p ? ".init_array" : ".fini_array",
 	       priority);
       sec = get_section (buf, SECTION_WRITE | SECTION_NOTYPE, NULL_TREE);
@@ -8645,7 +8798,7 @@ default_asm_output_ident_directive (const char *ident_str)
 }
 
 /* Switch to a COMDAT section with COMDAT name of decl.
-   
+
    FIXME:  resolve_unique_section needs to deal better with
    decls with both DECL_SECTION_NAME and DECL_ONE_ONLY.  Once
    that is fixed, this if-else statement can be replaced with
@@ -8701,6 +8854,60 @@ static void
 handle_vtv_comdat_section (section *sect, const_tree decl ATTRIBUTE_UNUSED)
 {
   switch_to_comdat_section(sect, DECL_NAME (decl));
+}
+
+void
+varasm_cc_finalize ()
+{
+  first_global_object_name = nullptr;
+  weak_global_object_name = nullptr;
+
+  const_labelno = 0;
+  size_directive_output = 0;
+
+  last_assemble_variable_decl = NULL_TREE;
+  first_function_block_is_cold = false;
+  saw_no_split_stack = false;
+  text_section = nullptr;
+  data_section = nullptr;
+  readonly_data_section = nullptr;
+  sdata_section = nullptr;
+  ctors_section = nullptr;
+  dtors_section = nullptr;
+  bss_section = nullptr;
+  sbss_section = nullptr;
+  tls_comm_section = nullptr;
+  comm_section = nullptr;
+  lcomm_section = nullptr;
+  bss_noswitch_section = nullptr;
+  exception_section = nullptr;
+  eh_frame_section = nullptr;
+  in_section = nullptr;
+  in_cold_section_p = false;
+  cold_function_name = NULL_TREE;
+  unnamed_sections = nullptr;
+  section_htab = nullptr;
+  object_block_htab = nullptr;
+  anchor_labelno = 0;
+  shared_constant_pool = nullptr;
+  pending_assemble_externals = NULL_TREE;
+  pending_libcall_symbols = nullptr;
+
+#ifdef ASM_OUTPUT_EXTERNAL
+  pending_assemble_externals_processed = false;
+  delete pending_assemble_externals_set;
+  pending_assemble_externals_set = nullptr;
+#endif
+
+  weak_decls = NULL_TREE;
+  initial_trampoline = nullptr;
+  const_desc_htab = nullptr;
+  weakref_targets = NULL_TREE;
+  alias_pairs = nullptr;
+  tm_clone_hash = nullptr;
+  trampolines_created = 0;
+  elf_init_array_section = nullptr;
+  elf_fini_array_section = nullptr;
 }
 
 #include "gt-varasm.h"

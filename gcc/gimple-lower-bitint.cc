@@ -2142,6 +2142,7 @@ bitint_large_huge::handle_stmt (gimple *stmt, tree idx)
 						idx),
 				gimple_assign_rhs2 (stmt), idx);
 	case SSA_NAME:
+	case PAREN_EXPR:
 	case INTEGER_CST:
 	  return handle_operand (gimple_assign_rhs1 (stmt), idx);
 	CASE_CONVERT:
@@ -3596,6 +3597,7 @@ bitint_large_huge::lower_muldiv_stmt (tree obj, gimple *stmt)
       insert_before (g);
       break;
     case TRUNC_DIV_EXPR:
+    case EXACT_DIV_EXPR:
       g = gimple_build_call_internal (IFN_DIVMODBITINT, 8,
 				      lhs, build_int_cst (sitype, prec),
 				      null_pointer_node,
@@ -4192,7 +4194,7 @@ bitint_large_huge::lower_addsub_overflow (tree obj, gimple *stmt)
       else
 	{
 	  m_data_cnt = data_cnt;
-	  if (TYPE_UNSIGNED (type0))
+	  if (TYPE_UNSIGNED (type0) || prec0 >= 0)
 	    rhs1 = build_zero_cst (m_limb_type);
 	  else
 	    {
@@ -4210,7 +4212,7 @@ bitint_large_huge::lower_addsub_overflow (tree obj, gimple *stmt)
 		  rhs1 = add_cast (m_limb_type, gimple_assign_lhs (g));
 		}
 	    }
-	  if (TYPE_UNSIGNED (type1))
+	  if (TYPE_UNSIGNED (type1) || prec1 >= 0)
 	    rhs2 = build_zero_cst (m_limb_type);
 	  else
 	    {
@@ -5559,6 +5561,7 @@ bitint_large_huge::lower_stmt (gimple *stmt)
 		return;
 	      case MULT_EXPR:
 	      case TRUNC_DIV_EXPR:
+	      case EXACT_DIV_EXPR:
 	      case TRUNC_MOD_EXPR:
 		lower_muldiv_stmt (lhs, g);
 		goto handled;
@@ -5606,7 +5609,9 @@ bitint_large_huge::lower_stmt (gimple *stmt)
       || gimple_store_p (stmt)
       || gimple_assign_load_p (stmt)
       || eq_p
-      || mergeable_cast_p)
+      || mergeable_cast_p
+      || (is_gimple_assign (stmt)
+	  && gimple_assign_rhs_code (stmt) == PAREN_EXPR))
     {
       lhs = lower_mergeable_stmt (stmt, cmp_code, cmp_op1, cmp_op2);
       if (!eq_p)
@@ -5693,6 +5698,7 @@ bitint_large_huge::lower_stmt (gimple *stmt)
 	return;
       case MULT_EXPR:
       case TRUNC_DIV_EXPR:
+      case EXACT_DIV_EXPR:
       case TRUNC_MOD_EXPR:
 	lower_muldiv_stmt (NULL_TREE, stmt);
 	return;
@@ -5739,6 +5745,7 @@ stmt_needs_operand_addr (gimple *stmt)
       {
       case MULT_EXPR:
       case TRUNC_DIV_EXPR:
+      case EXACT_DIV_EXPR:
       case TRUNC_MOD_EXPR:
       case FLOAT_EXPR:
 	return true;
@@ -5930,6 +5937,7 @@ build_bitint_stmt_ssa_conflicts (gimple *stmt, live_track *live,
 		{
 		case MULT_EXPR:
 		case TRUNC_DIV_EXPR:
+		case EXACT_DIV_EXPR:
 		case TRUNC_MOD_EXPR:
 		  muldiv_p = true;
 		default:
@@ -6173,6 +6181,7 @@ gimple_lower_bitint (void)
 		break;
 	      case MULT_EXPR:
 	      case TRUNC_DIV_EXPR:
+	      case EXACT_DIV_EXPR:
 	      case TRUNC_MOD_EXPR:
 		if (SSA_NAME_OCCURS_IN_ABNORMAL_PHI (s))
 		  {
@@ -6454,6 +6463,7 @@ gimple_lower_bitint (void)
 			switch (gimple_assign_rhs_code (use_stmt))
 			  {
 			  case TRUNC_DIV_EXPR:
+			  case EXACT_DIV_EXPR:
 			  case TRUNC_MOD_EXPR:
 			  case FLOAT_EXPR:
 			    /* For division, modulo and casts to floating
@@ -6567,6 +6577,7 @@ gimple_lower_bitint (void)
 		  case RSHIFT_EXPR:
 		  case MULT_EXPR:
 		  case TRUNC_DIV_EXPR:
+		  case EXACT_DIV_EXPR:
 		  case TRUNC_MOD_EXPR:
 		  case FIX_TRUNC_EXPR:
 		  case REALPART_EXPR:
@@ -6630,7 +6641,10 @@ gimple_lower_bitint (void)
 		    continue;
 		  if (gimple_code (use_stmt) == GIMPLE_PHI
 		      || is_gimple_call (use_stmt)
-		      || gimple_code (use_stmt) == GIMPLE_ASM)
+		      || gimple_code (use_stmt) == GIMPLE_ASM
+		      || (is_gimple_assign (use_stmt)
+			  && (gimple_assign_rhs_code (use_stmt)
+			      == COMPLEX_EXPR)))
 		    {
 		      optimizable_load = false;
 		      break;
@@ -6900,7 +6914,8 @@ gimple_lower_bitint (void)
 		    if (stmt_ends_bb_p (stmt))
 		      {
 			edge e = find_fallthru_edge (gsi_bb (gsi)->succs);
-			gsi_insert_on_edge_immediate (e, g);
+			gsi_insert_on_edge (e, g);
+			edge_insertions = true;
 		      }
 		    else
 		      gsi_insert_after (&gsi, g, GSI_SAME_STMT);

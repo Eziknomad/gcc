@@ -71,8 +71,8 @@ ix86_handle_shared_attribute (tree *node, tree name, tree, int,
 /* Handle a "selectany" attribute;
    arguments as in struct attribute_spec.handler.  */
 tree
-ix86_handle_selectany_attribute (tree *node, tree name, tree, int,
-				 bool *no_add_attrs)
+mingw_handle_selectany_attribute (tree *node, tree name, tree, int,
+				  bool *no_add_attrs)
 {
   tree decl = *node;
   /* The attribute applies only to objects that are initialized and have
@@ -120,7 +120,7 @@ i386_pe_determine_dllexport_p (tree decl)
   if (TREE_CODE (decl) == FUNCTION_DECL
       && DECL_DECLARED_INLINE_P (decl)
       && !flag_keep_inline_dllexport)
-    return false; 
+    return false;
 
   if (lookup_attribute ("dllexport", DECL_ATTRIBUTES (decl)))
     return true;
@@ -162,7 +162,7 @@ i386_pe_determine_dllimport_p (tree decl)
 /* Handle the -mno-fun-dllimport target switch.  */
 
 bool
-i386_pe_valid_dllimport_attribute_p (const_tree decl)
+mingw_pe_valid_dllimport_attribute_p (const_tree decl)
 {
    if (TARGET_NOP_FUN_DLLIMPORT && TREE_CODE (decl) == FUNCTION_DECL)
      return false;
@@ -185,11 +185,11 @@ gen_stdcall_or_fastcall_suffix (tree decl, tree id, bool fastcall)
   tree arg;
   function_args_iterator args_iter;
 
-  gcc_assert (TREE_CODE (decl) == FUNCTION_DECL);  
+  gcc_assert (TREE_CODE (decl) == FUNCTION_DECL);
 
   if (prototype_p (type))
     {
-      /* This attribute is ignored for variadic functions.  */ 
+      /* This attribute is ignored for variadic functions.  */
       if (stdarg_p (type))
 	return NULL_TREE;
 
@@ -235,7 +235,7 @@ i386_pe_maybe_mangle_decl_assembler_name (tree decl, tree id)
   tree new_id = NULL_TREE;
 
   if (TREE_CODE (decl) == FUNCTION_DECL)
-    { 
+    {
       unsigned int ccvt = ix86_get_callcvt (TREE_TYPE (decl));
       if ((ccvt & IX86_CALLCVT_STDCALL) != 0)
         {
@@ -279,7 +279,7 @@ i386_pe_assemble_visibility (tree decl, int)
 tree
 i386_pe_mangle_decl_assembler_name (tree decl, tree id)
 {
-  tree new_id = i386_pe_maybe_mangle_decl_assembler_name (decl, id);   
+  tree new_id = i386_pe_maybe_mangle_decl_assembler_name (decl, id);
 
   return (new_id ? new_id : id);
 }
@@ -335,7 +335,7 @@ mingw_pe_encode_section_info (tree decl, rtx rtl, int first)
     flags |= SYMBOL_FLAG_DLLEXPORT;
   else if (i386_pe_determine_dllimport_p (decl))
     flags |= SYMBOL_FLAG_DLLIMPORT;
- 
+
   SYMBOL_REF_FLAGS (symbol) = flags;
 }
 
@@ -367,7 +367,7 @@ i386_pe_binds_local_p (const_tree exp)
       && DECL_DECLARED_INLINE_P (exp))
     return false;
 #endif
-  
+
   return default_binds_local_p_1 (exp, 0);
 }
 
@@ -495,7 +495,7 @@ mingw_pe_asm_named_section (const char *name, unsigned int flags,
       *f++ ='d';  /* This is necessary for older versions of gas.  */
       *f++ ='r';
     }
-  else	
+  else
     {
       if (flags & SECTION_CODE)
         *f++ = 'x';
@@ -527,7 +527,7 @@ mingw_pe_asm_named_section (const char *name, unsigned int flags,
 	 Instead, have the linker pick one, without warning.
 	 If 'selectany' attribute has been specified,  MS compiler
 	 sets 'discard' characteristic, rather than telling linker
-	 to warn of size or content mismatch, so do the same.  */ 
+	 to warn of size or content mismatch, so do the same.  */
       bool discard = (flags & SECTION_CODE)
 		      || (TREE_CODE (decl) != IDENTIFIER_NODE
 			  && lookup_attribute ("selectany",
@@ -555,7 +555,7 @@ i386_pe_asm_output_aligned_decl_common (FILE *stream, tree decl,
   rounded += (BIGGEST_ALIGNMENT / BITS_PER_UNIT) - 1;
   rounded = (rounded / (BIGGEST_ALIGNMENT / BITS_PER_UNIT)
 	     * (BIGGEST_ALIGNMENT / BITS_PER_UNIT));
-  
+
   mingw_pe_maybe_record_exported_symbol (decl, name, 1);
 
   fprintf (stream, "\t.comm\t");
@@ -575,20 +575,20 @@ i386_pe_asm_output_aligned_decl_common (FILE *stream, tree decl,
 
 #include "gsyms.h"
 
-/* Mark a function appropriately.  This should only be called for
+/* Mark a function or an object appropriately.  This should only be called for
    functions for which we are not emitting COFF debugging information.
    FILE is the assembler output file, NAME is the name of the
    function, and PUB is nonzero if the function is globally
    visible.  */
 
 void
-mingw_pe_declare_function_type (FILE *file, const char *name, int pub)
+mingw_pe_declare_type (FILE *file, const char *name, bool pub, bool func)
 {
   fprintf (file, "\t.def\t");
   assemble_name (file, name);
   fprintf (file, ";\t.scl\t%d;\t.type\t%d;\t.endef\n",
 	   pub ? (int) C_EXT : (int) C_STAT,
-	   (int) DT_FCN << N_BTSHFT);
+	   (int) (func ? DT_FCN : DT_NON) << N_BTSHFT);
 }
 
 /* Keep a list of external functions.  */
@@ -635,6 +635,7 @@ struct GTY(()) stub_list
 {
   struct stub_list *next;
   const char *name;
+  bool is_weak_decl_needed;
 };
 
 static GTY(()) struct export_list *export_head;
@@ -672,7 +673,7 @@ mingw_pe_maybe_record_exported_symbol (tree decl, const char *name, int is_data)
 }
 
 void
-i386_pe_record_stub (const char *name)
+mingw_pe_record_stub (const char *name, bool is_weak_decl_needed)
 {
   struct stub_list *p;
 
@@ -691,6 +692,7 @@ i386_pe_record_stub (const char *name)
   p = ggc_alloc<stub_list> ();
   p->next = stub_head;
   p->name = name;
+  p->is_weak_decl_needed = is_weak_decl_needed;
   stub_head = p;
 }
 
@@ -749,7 +751,7 @@ i386_find_on_wrapper_list (const char *target)
    output the .drectve section.  */
 
 void
-i386_pe_file_end (void)
+mingw_pe_file_end (void)
 {
   struct extern_list *p;
 
@@ -769,12 +771,12 @@ i386_pe_file_end (void)
 	     the real function so that an (unused) import is created.  */
 	  const char *realsym = i386_find_on_wrapper_list (p->name);
 	  if (realsym)
-	    mingw_pe_declare_function_type (asm_out_file,
-		concat ("__real_", realsym, NULL), TREE_PUBLIC (decl));
+	    mingw_pe_declare_type (asm_out_file,
+		concat ("__real_", realsym, NULL), TREE_PUBLIC (decl), 1);
 #endif /* CXX_WRAP_SPEC_LIST */
 	  TREE_ASM_WRITTEN (decl) = 1;
-	  mingw_pe_declare_function_type (asm_out_file, p->name,
-					 TREE_PUBLIC (decl));
+	  mingw_pe_declare_type (asm_out_file, p->name,
+				 TREE_PUBLIC (decl), 1);
 	}
     }
 
@@ -807,6 +809,15 @@ i386_pe_file_end (void)
 	  if (!startswith (name, "refptr."))
 	    continue;
 	  name += 7;
+
+	  if (q->is_weak_decl_needed)
+	    {
+#ifdef ASM_WEAKEN_LABEL
+	      ASM_WEAKEN_LABEL (asm_out_file, name);
+#endif
+	      mingw_pe_declare_type (asm_out_file, name, 1, 1);
+	    }
+
 	  fprintf (asm_out_file, "\t.section\t.rdata$%s, \"dr\"\n"
 	  		   "\t.globl\t%s\n"
 			   "\t.linkonce\tdiscard\n", oname, oname);
@@ -820,14 +831,14 @@ i386_pe_file_end (void)
 static enum debug_info_levels saved_debug_info_level;
 
 void
-i386_pe_asm_lto_start (void)
+mingw_pe_asm_lto_start (void)
 {
   saved_debug_info_level = debug_info_level;
   debug_info_level = DINFO_LEVEL_NONE;
 }
 
 void
-i386_pe_asm_lto_end (void)
+mingw_pe_asm_lto_end (void)
 {
   debug_info_level = saved_debug_info_level;
 }
@@ -1363,7 +1374,7 @@ void
 i386_pe_start_function (FILE *f, const char *name, tree decl)
 {
   mingw_pe_maybe_record_exported_symbol (decl, name, 0);
-  mingw_pe_declare_function_type (f, name, TREE_PUBLIC (decl));
+  mingw_pe_declare_type (f, name, TREE_PUBLIC (decl), 1);
   /* In case section was altered by debugging output.  */
   if (decl != NULL_TREE)
     switch_to_section (function_section (decl));

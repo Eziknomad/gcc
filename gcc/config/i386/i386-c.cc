@@ -156,6 +156,10 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
       def_or_undef (parse_in, "__yongfeng");
       def_or_undef (parse_in, "__yongfeng__");
       break;
+    case PROCESSOR_SHIJIDADAO:
+      def_or_undef (parse_in, "__shijidadao");
+      def_or_undef (parse_in, "__shijidadao__");
+      break;
     case PROCESSOR_PENTIUM4:
       def_or_undef (parse_in, "__pentium4");
       def_or_undef (parse_in, "__pentium4__");
@@ -287,6 +291,10 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
       def_or_undef (parse_in, "__pantherlake");
       def_or_undef (parse_in, "__pantherlake__");
       break;
+    case PROCESSOR_DIAMONDRAPIDS:
+      def_or_undef (parse_in, "__diamondrapids");
+      def_or_undef (parse_in, "__diamondrapids__");
+      break;
 
     /* use PROCESSOR_max to not set/unset the arch macro.  */
     case PROCESSOR_max:
@@ -386,6 +394,9 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
     case PROCESSOR_YONGFENG:
       def_or_undef (parse_in, "__tune_yongfeng__");
        break;
+    case PROCESSOR_SHIJIDADAO:
+      def_or_undef (parse_in, "__tune_shijidadao__");
+       break;
     case PROCESSOR_PENTIUM4:
       def_or_undef (parse_in, "__tune_pentium4__");
       break;
@@ -483,6 +494,9 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
       break;
     case PROCESSOR_PANTHERLAKE:
       def_or_undef (parse_in, "__tune_pantherlake__");
+      break;
+    case PROCESSOR_DIAMONDRAPIDS:
+      def_or_undef (parse_in, "__tune_diamondrapids__");
       break;
     case PROCESSOR_INTEL:
     case PROCESSOR_GENERIC:
@@ -730,6 +744,22 @@ ix86_target_macros_internal (HOST_WIDE_INT isa_flag,
     def_or_undef (parse_in, "__APX_F__");
   if (ix86_apx_inline_asm_use_gpr32)
     def_or_undef (parse_in, "__APX_INLINE_ASM_USE_GPR32__");
+  if (isa_flag2 & OPTION_MASK_ISA2_AVX10_2_256)
+    def_or_undef (parse_in, "__AVX10_2_256__");
+  if (isa_flag2 & OPTION_MASK_ISA2_AVX10_2_512)
+    def_or_undef (parse_in, "__AVX10_2_512__");
+  if (isa_flag2 & OPTION_MASK_ISA2_AMX_AVX512)
+    def_or_undef (parse_in, "__AMX_AVX512__");
+  if (isa_flag2 & OPTION_MASK_ISA2_AMX_TF32)
+    def_or_undef (parse_in, "__AMX_TF32__");
+  if (isa_flag2 & OPTION_MASK_ISA2_AMX_TRANSPOSE)
+    def_or_undef (parse_in, "__AMX_TRANSPOSE__");
+  if (isa_flag2 & OPTION_MASK_ISA2_AMX_FP8)
+    def_or_undef (parse_in, "__AMX_FP8__");
+  if (isa_flag2 & OPTION_MASK_ISA2_MOVRS)
+    def_or_undef (parse_in, "__MOVRS__");
+  if (isa_flag2 & OPTION_MASK_ISA2_AMX_MOVRS)
+    def_or_undef (parse_in, "__AMX_MOVRS__");
   if (TARGET_IAMCU)
     {
       def_or_undef (parse_in, "__iamcu");

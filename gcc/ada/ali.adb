@@ -665,6 +665,7 @@ package body ALI is
       No_Object_Specified                    := False;
       No_Component_Reordering_Specified      := False;
       GNATprove_Mode_Specified               := False;
+      Interrupts_Default_To_System_Specified := False;
       Normalize_Scalars_Specified            := False;
       Partition_Elaboration_Policy_Specified := ' ';
       Queuing_Policy_Specified               := ' ';
@@ -1750,6 +1751,7 @@ package body ALI is
         First_Specific_Dispatching   => Specific_Dispatching.Last + 1,
         First_Unit                   => No_Unit_Id,
         GNATprove_Mode               => False,
+        Interrupts_Default_To_System => False,
         Invocation_Graph_Encoding    => No_Encoding,
         Last_CUDA_Kernel             => CUDA_Kernels.Last,
         Last_Interrupt_State         => Interrupt_States.Last,
@@ -2004,6 +2006,13 @@ package body ALI is
                Checkc ('P');
                GNATprove_Mode_Specified := True;
                ALIs.Table (Id).GNATprove_Mode := True;
+
+            --  Processing for ID (Interrupts Default to System)
+
+            elsif C = 'I' then
+               Checkc ('D');
+               Interrupts_Default_To_System_Specified := True;
+               ALIs.Table (Id).Interrupts_Default_To_System := True;
 
             --  Processing for Lx
 
@@ -2933,24 +2942,22 @@ package body ALI is
                Checkc (' ');
                Skip_Space;
                Withs.Increment_Last;
-               Withs.Table (Withs.Last).Uname              := Get_Unit_Name;
-               Withs.Table (Withs.Last).Elaborate          := False;
-               Withs.Table (Withs.Last).Elaborate_All      := False;
-               Withs.Table (Withs.Last).Elab_Desirable     := False;
-               Withs.Table (Withs.Last).Elab_All_Desirable := False;
-               Withs.Table (Withs.Last).SAL_Interface      := False;
-               Withs.Table (Withs.Last).Limited_With       := (C = 'Y');
-               Withs.Table (Withs.Last).Implicit_With      := (C = 'Z');
+               Withs.Table (Withs.Last) :=
+                 (Uname              => Get_Unit_Name,
+                  Sfile              => No_File,
+                  Afile              => No_File,
+                  Elaborate          => False,
+                  Elaborate_All      => False,
+                  Elab_Desirable     => False,
+                  Elab_All_Desirable => False,
+                  SAL_Interface      => False,
+                  Limited_With       => (C = 'Y'),
+                  Implicit_With      => (C = 'Z'));
 
-               --  Generic case with no object file available
+               --  If At_Eol, then no object file is available; leave Sfile and
+               --  Afile as above (No_File).
 
-               if At_Eol then
-                  Withs.Table (Withs.Last).Sfile := No_File;
-                  Withs.Table (Withs.Last).Afile := No_File;
-
-               --  Normal case
-
-               else
+               if not At_Eol then
                   Withs.Table (Withs.Last).Sfile := Get_File_Name
                                                       (Lower => True);
                   Withs.Table (Withs.Last).Afile := Get_File_Name

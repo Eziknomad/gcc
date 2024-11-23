@@ -193,6 +193,14 @@ package Rtsfind is
 
       Interfaces_C_Strings,
 
+      --  Package SPARK
+
+      SPARK,
+
+      --  Children of SPARK
+
+      SPARK_Big_Integers,
+
       --  Package System
 
       System,
@@ -575,6 +583,7 @@ package Rtsfind is
 
      RE_Big_Integer,             -- Ada.Numerics.Big_Numbers.Big_Integers
      RO_GH_Big_Integer,          -- Ada.Numerics.Big_Numbers.Big_Integers_Ghost
+     RO_SP_Big_Integer,          -- SPARK.Big_Integers
 
      RE_Names,                           -- Ada.Interrupts.Names
 
@@ -919,7 +928,6 @@ package Rtsfind is
 
      RE_Attr_Long_Long_Float,            -- System.Fat_LLF
 
-     RE_Add_Offset_To_Address,           -- System.Finalization_Primitives
      RE_Attach_Object_To_Collection,     -- System.Finalization_Primitives
      RE_Attach_Object_To_Master,         -- System.Finalization_Primitives
      RE_Attach_Object_To_Node,           -- System.Finalization_Primitives
@@ -2045,6 +2053,8 @@ package Rtsfind is
      RE_String_To_Wide_String,           -- System.WCh_StW
      RE_String_To_Wide_Wide_String,      -- System.WCh_StW
 
+     RE_Enum_Wide_String_To_String,      -- System.WCh_WtS
+     RE_Enum_Wide_Wide_String_To_String, -- System.WCh_WtS
      RE_Wide_String_To_String,           -- System.WCh_WtS
      RE_Wide_Wide_String_To_String,      -- System.WCh_WtS
 
@@ -2221,6 +2231,7 @@ package Rtsfind is
 
      RE_Big_Integer             => Ada_Numerics_Big_Numbers_Big_Integers,
      RO_GH_Big_Integer          => Ada_Numerics_Big_Numbers_Big_Integers_Ghost,
+     RO_SP_Big_Integer          => SPARK_Big_Integers,
 
      RE_Names                            => Ada_Interrupts_Names,
 
@@ -2571,7 +2582,6 @@ package Rtsfind is
 
      RE_Attr_Long_Long_Float             => System_Fat_LLF,
 
-     RE_Add_Offset_To_Address            => System_Finalization_Primitives,
      RE_Attach_Object_To_Collection      => System_Finalization_Primitives,
      RE_Attach_Object_To_Master          => System_Finalization_Primitives,
      RE_Attach_Object_To_Node            => System_Finalization_Primitives,
@@ -3703,6 +3713,8 @@ package Rtsfind is
      RE_String_To_Wide_String            => System_WCh_StW,
      RE_String_To_Wide_Wide_String       => System_WCh_StW,
 
+     RE_Enum_Wide_String_To_String       => System_WCh_WtS,
+     RE_Enum_Wide_Wide_String_To_String  => System_WCh_WtS,
      RE_Wide_String_To_String            => System_WCh_WtS,
      RE_Wide_Wide_String_To_String       => System_WCh_WtS,
 

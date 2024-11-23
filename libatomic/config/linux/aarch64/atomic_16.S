@@ -35,16 +35,21 @@
    writes, this will be true when using atomics in actual code.
 
    The libat_<op>_16 entry points are ARMv8.0.
-   The libat_<op>_16_i1 entry points are used when LSE128 is available.
+   The libat_<op>_16_i1 entry points are used when LSE128 or LRCPC3 is available.
    The libat_<op>_16_i2 entry points are used when LSE2 is available.  */
 
 #include "auto-config.h"
 
 	.arch	armv8-a+lse
 
+/* There is overlap in atomic instructions implemented in RCPC3 and LSE2.
+   Consequently, both _i1 and _i2 suffixes are needed for functions using these.
+   Elsewhere, all extension-specific implementations are mapped to _i1.  */
+
+#define LRCPC3(NAME)	libat_##NAME##_i1
 #define LSE128(NAME)	libat_##NAME##_i1
 #define LSE(NAME)	libat_##NAME##_i1
-#define LSE2(NAME)	libat_##NAME##_i1
+#define LSE2(NAME)	libat_##NAME##_i2
 #define CORE(NAME)	libat_##NAME
 #define ATOMIC(NAME)	__atomic_##NAME
 
@@ -513,6 +518,43 @@ END (test_and_set_16)
 /* ifunc implementations: Carries run-time dependence on the presence of further
    architectural extensions.  */
 
+ENTRY_FEAT (load_16, LRCPC3)
+	cbnz	w1, 1f
+
+	/* RELAXED.  */
+	ldp	res0, res1, [x0]
+	ret
+1:
+	cmp	w1, SEQ_CST
+	b.eq	2f
+
+	/* ACQUIRE/CONSUME (Load-AcquirePC semantics).  */
+	/* ldiapp res0, res1, [x0]  */
+	.inst	0xd9411800
+	ret
+
+	/* SEQ_CST.  */
+2:	ldar	tmp0, [x0]	/* Block reordering with Store-Release instr.  */
+	/* ldiapp res0, res1, [x0]  */
+	.inst	0xd9411800
+	ret
+END_FEAT (load_16, LRCPC3)
+
+
+ENTRY_FEAT (store_16, LRCPC3)
+	cbnz	w4, 1f
+
+	/* RELAXED.  */
+	stp	in0, in1, [x0]
+	ret
+
+	/* RELEASE/SEQ_CST.  */
+1:	/* stilp in0, in1, [x0]  */
+	.inst	0xd9031802
+	ret
+END_FEAT (store_16, LRCPC3)
+
+
 ENTRY_FEAT (exchange_16, LSE128)
 	mov	tmp0, x0
 	mov	res0, in0
@@ -733,6 +775,7 @@ END_FEAT (compare_exchange_16, LSE)
 #define FEATURE_1_AND 0xc0000000
 #define FEATURE_1_BTI 1
 #define FEATURE_1_PAC 2
+#define FEATURE_1_GCS 4
 
 /* Supported features based on the code generation options.  */
 #if defined(__ARM_FEATURE_BTI_DEFAULT)
@@ -745,6 +788,12 @@ END_FEAT (compare_exchange_16, LSE)
 # define PAC_FLAG FEATURE_1_PAC
 #else
 # define PAC_FLAG 0
+#endif
+
+#if __ARM_FEATURE_GCS_DEFAULT
+# define GCS_FLAG FEATURE_1_GCS
+#else
+# define GCS_FLAG 0
 #endif
 
 /* Add a NT_GNU_PROPERTY_TYPE_0 note.  */
@@ -764,7 +813,7 @@ END_FEAT (compare_exchange_16, LSE)
 .section .note.GNU-stack, "", %progbits
 
 /* Add GNU property note if built with branch protection.  */
-# if (BTI_FLAG|PAC_FLAG) != 0
-GNU_PROPERTY (FEATURE_1_AND, BTI_FLAG|PAC_FLAG)
+# if (BTI_FLAG|PAC_FLAG|GCS_FLAG) != 0
+GNU_PROPERTY (FEATURE_1_AND, BTI_FLAG|PAC_FLAG|GCS_FLAG)
 # endif
 #endif

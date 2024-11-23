@@ -22,6 +22,8 @@ along with GCC; see the file COPYING3.  If not see
 #ifndef GCC_RISCV_SUBSET_H
 #define GCC_RISCV_SUBSET_H
 
+#include "riscv-feature-bits.h"
+
 #define RISCV_DONT_CARE_VERSION -1
 
 /* Subset info.  */
@@ -61,6 +63,12 @@ private:
 
   /* X-len of m_arch. */
   unsigned m_xlen;
+
+  /* Number of subsets. */
+  unsigned m_subset_num;
+
+  /* Allow adding the same extension more than once.  */
+  bool m_allow_adding_dup;
 
   riscv_subset_list (const char *, location_t);
 
@@ -106,15 +114,19 @@ public:
 
   void set_loc (location_t);
 
+  void set_allow_adding_dup (bool v) { m_allow_adding_dup = v; }
+
   void finalize ();
 };
 
-extern const riscv_subset_list *riscv_current_subset_list (void);
 extern const riscv_subset_list *riscv_cmdline_subset_list (void);
-extern std::string * riscv_func_target_get (tree);
-extern void riscv_func_target_put (tree, std::string);
-extern void riscv_func_target_remove_and_destory (tree);
 extern void
 riscv_set_arch_by_subset_list (riscv_subset_list *, struct gcc_options *);
+extern bool riscv_minimal_hwprobe_feature_bits (const char *,
+						struct riscv_feature_bits *,
+						location_t);
+extern bool
+riscv_ext_is_subset (struct cl_target_option *, struct cl_target_option *);
+extern int riscv_x_target_flags_isa_mask (void);
 
 #endif /* ! GCC_RISCV_SUBSET_H */

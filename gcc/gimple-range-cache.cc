@@ -61,7 +61,7 @@ void
 ssa_block_ranges::dump (FILE *f)
 {
   basic_block bb;
-  Value_Range r (m_type);
+  value_range r (m_type);
 
   FOR_EACH_BB_FN (bb, cfun)
     if (get_bb_range (r, bb))
@@ -493,7 +493,7 @@ block_range_cache::dump (FILE *f, basic_block bb, bool print_varying)
       if (!gimple_range_ssa_p (ssa_name (x)))
 	continue;
 
-      Value_Range r (TREE_TYPE (ssa_name (x)));
+      value_range r (TREE_TYPE (ssa_name (x)));
       if (m_ssa_ranges[x]->get_bb_range (r, bb))
 	{
 	  if (!print_varying && r.varying_p ())
@@ -519,7 +519,7 @@ block_range_cache::dump (FILE *f, basic_block bb, bool print_varying)
 	  if (!gimple_range_ssa_p (ssa_name (x)))
 	    continue;
 
-	  Value_Range r (TREE_TYPE (ssa_name (x)));
+	  value_range r (TREE_TYPE (ssa_name (x)));
 	  if (m_ssa_ranges[x]->get_bb_range (r, bb))
 	    {
 	      if (r.varying_p ())
@@ -576,7 +576,7 @@ ssa_cache::has_range (tree name) const
   return m_tab[v] != NULL;
 }
 
-// Retrieve the global range of NAME from cache memory if it exists. 
+// Retrieve the global range of NAME from cache memory if it exists.
 // Return the value in R.
 
 bool
@@ -627,7 +627,7 @@ ssa_cache::merge_range (tree name, const vrange &r)
     m_tab[v] = m_range_allocator->clone (r);
   else
     {
-      Value_Range curr (TREE_TYPE (name));
+      value_range curr (TREE_TYPE (name));
       m->get_vrange (curr, TREE_TYPE (name));
       // If there is no change, return false.
       if (!curr.intersect (r))
@@ -670,7 +670,7 @@ ssa_cache::dump (FILE *f)
     {
       if (!gimple_range_ssa_p (ssa_name (x)))
 	continue;
-      Value_Range r (TREE_TYPE (ssa_name (x)));
+      value_range r (TREE_TYPE (ssa_name (x)));
       // Dump all non-varying ranges.
       if (get_range (r, ssa_name (x)) && !r.varying_p ())
 	{
@@ -681,6 +681,32 @@ ssa_cache::dump (FILE *f)
 	}
     }
 
+}
+
+// Construct an ssa_lazy_cache. If OB is specified, us it, otherwise use
+// a local bitmap obstack.
+
+ssa_lazy_cache::ssa_lazy_cache (bitmap_obstack *ob)
+{
+  if (!ob)
+    {
+      bitmap_obstack_initialize (&m_bitmaps);
+      m_ob = &m_bitmaps;
+    }
+  else
+    m_ob = ob;
+  active_p = BITMAP_ALLOC (m_ob);
+}
+
+// Destruct an sa_lazy_cache.  Free the bitmap if it came from a different
+// obstack, or release the obstack if it was a local one.
+
+ssa_lazy_cache::~ssa_lazy_cache ()
+{
+  if (m_ob == &m_bitmaps)
+    bitmap_obstack_release (&m_bitmaps);
+  else
+    BITMAP_FREE (active_p);
 }
 
 // Return true if NAME has an active range in the cache.
@@ -741,7 +767,7 @@ ssa_lazy_cache::merge (const ssa_lazy_cache &cache)
   EXECUTE_IF_SET_IN_BITMAP (cache.active_p, 0, x, bi)
     {
       tree name = ssa_name (x);
-      Value_Range r(TREE_TYPE (name));
+      value_range r(TREE_TYPE (name));
       cache.get_range (r, name);
       merge_range (ssa_name (x), r);
     }
@@ -906,6 +932,7 @@ private:
   vec<int> m_update_list;
   int m_update_head;
   bitmap m_propfail;
+  bitmap_obstack m_bitmaps;
 };
 
 // Create an update list.
@@ -915,7 +942,8 @@ update_list::update_list ()
   m_update_list.create (0);
   m_update_list.safe_grow_cleared (last_basic_block_for_fn (cfun) + 64);
   m_update_head = -1;
-  m_propfail = BITMAP_ALLOC (NULL);
+  bitmap_obstack_initialize (&m_bitmaps);
+  m_propfail = BITMAP_ALLOC (&m_bitmaps);
 }
 
 // Destroy an update list.
@@ -923,7 +951,7 @@ update_list::update_list ()
 update_list::~update_list ()
 {
   m_update_list.release ();
-  BITMAP_FREE (m_propfail);
+  bitmap_obstack_release (&m_bitmaps);
 }
 
 // Add BB to the list of blocks to update, unless it's already in the list.
@@ -969,9 +997,7 @@ update_list::pop ()
 
 ranger_cache::ranger_cache (int not_executable_flag, bool use_imm_uses)
 {
-  m_workback.create (0);
-  m_workback.safe_grow_cleared (last_basic_block_for_fn (cfun));
-  m_workback.truncate (0);
+  m_workback = vNULL;
   m_temporal = new temporal_cache;
 
   // If DOM info is available, spawn an oracle as well.
@@ -1195,7 +1221,7 @@ ranger_cache::edge_range (vrange &r, edge e, tree name, enum rfd_mode mode)
   // If this is not an abnormal edge, check for inferred ranges on exit.
   if ((e->flags & (EDGE_EH | EDGE_ABNORMAL)) == 0)
     infer_oracle ().maybe_adjust_range (r, name, e->src);
-  Value_Range er (TREE_TYPE (name));
+  value_range er (TREE_TYPE (name));
   if (gori ().edge_range_p (er, e, name, *this))
     r.intersect (er);
   return true;
@@ -1256,13 +1282,16 @@ ranger_cache::block_range (vrange &r, basic_block bb, tree name, bool calc)
       gimple *def_stmt = SSA_NAME_DEF_STMT (name);
       basic_block def_bb = NULL;
       if (def_stmt)
-	def_bb = gimple_bb (def_stmt);;
+	def_bb = gimple_bb (def_stmt);
       if (!def_bb)
 	{
 	  // If we get to the entry block, this better be a default def
 	  // or range_on_entry was called for a block not dominated by
-	  // the def.  
-	  gcc_checking_assert (SSA_NAME_IS_DEFAULT_DEF (name));
+	  // the def.  But it could be also SSA_NAME defined by a statement
+	  // not yet in the IL (such as queued edge insertion), in that case
+	  // just punt.
+	  if (!SSA_NAME_IS_DEFAULT_DEF (name))
+	    return false;
 	  def_bb = ENTRY_BLOCK_PTR_FOR_FN (cfun);
 	}
 
@@ -1287,9 +1316,9 @@ ranger_cache::propagate_cache (tree name)
   edge_iterator ei;
   edge e;
   tree type = TREE_TYPE (name);
-  Value_Range new_range (type);
-  Value_Range current_range (type);
-  Value_Range e_range (type);
+  value_range new_range (type);
+  value_range current_range (type);
+  value_range e_range (type);
 
   // Process each block by seeing if its calculated range on entry is
   // the same as its cached value. If there is a difference, update
@@ -1335,7 +1364,7 @@ ranger_cache::propagate_cache (tree name)
 	  // If the cache couldn't set the value, mark it as failed.
 	  if (!ok_p)
 	    m_update->propagation_failed (bb);
-	  if (DEBUG_RANGE_CACHE) 
+	  if (DEBUG_RANGE_CACHE)
 	    {
 	      if (!ok_p)
 		{
@@ -1354,11 +1383,11 @@ ranger_cache::propagate_cache (tree name)
 	  FOR_EACH_EDGE (e, ei, bb->succs)
 	    if (m_on_entry.bb_range_p (name, e->dest))
 	      {
-		if (DEBUG_RANGE_CACHE) 
+		if (DEBUG_RANGE_CACHE)
 		  fprintf (dump_file, " bb%d",e->dest->index);
 		m_update->add (e->dest);
 	      }
-	  if (DEBUG_RANGE_CACHE) 
+	  if (DEBUG_RANGE_CACHE)
 	    fprintf (dump_file, "\n");
 	}
     }
@@ -1425,8 +1454,8 @@ ranger_cache::fill_block_cache (tree name, basic_block bb, basic_block def_bb)
   edge_iterator ei;
   edge e;
   tree type = TREE_TYPE (name);
-  Value_Range block_result (type);
-  Value_Range undefined (type);
+  value_range block_result (type);
+  value_range undefined (type);
 
   // At this point we shouldn't be looking at the def, entry block.
   gcc_checking_assert (bb != def_bb && bb != ENTRY_BLOCK_PTR_FOR_FN (cfun));
@@ -1458,6 +1487,14 @@ ranger_cache::fill_block_cache (tree name, basic_block bb, basic_block def_bb)
       tree equiv_name;
       relation_kind rel;
       int prec = TYPE_PRECISION (type);
+      // If there are too many basic blocks, do not attempt to process
+      // equivalencies.
+      if (last_basic_block_for_fn (cfun) > param_vrp_sparse_threshold)
+	{
+	  m_on_entry.set_bb_range (name, bb, block_result);
+	  gcc_checking_assert (m_workback.length () == start_length);
+	  return;
+	}
       FOR_EACH_PARTIAL_AND_FULL_EQUIV (m_relation, bb, name, equiv_name, rel)
 	{
 	  basic_block equiv_bb = gimple_bb (SSA_NAME_DEF_STMT (equiv_name));
@@ -1486,7 +1523,7 @@ ranger_cache::fill_block_cache (tree name, basic_block bb, basic_block def_bb)
 	      print_generic_expr (dump_file, equiv_name, TDF_SLIM);
 	      fprintf (dump_file, "\n");
 	    }
-	  Value_Range equiv_range (TREE_TYPE (equiv_name));
+	  value_range equiv_range (TREE_TYPE (equiv_name));
 	  if (range_from_dom (equiv_range, equiv_name, bb, RFD_READ_ONLY))
 	    {
 	      if (rel != VREL_EQ)
@@ -1521,7 +1558,7 @@ ranger_cache::fill_block_cache (tree name, basic_block bb, basic_block def_bb)
   // Visit each block back to the DEF.  Initialize each one to UNDEFINED.
   // m_visited at the end will contain all the blocks that we needed to set
   // the range_on_entry cache for.
-  m_workback.quick_push (bb);
+  m_workback.safe_push (bb);
   undefined.set_undefined ();
   m_on_entry.set_bb_range (name, bb, undefined);
   gcc_checking_assert (m_update->empty_p ());
@@ -1539,7 +1576,7 @@ ranger_cache::fill_block_cache (tree name, basic_block bb, basic_block def_bb)
       FOR_EACH_EDGE (e, ei, node->preds)
 	{
 	  basic_block pred = e->src;
-	  Value_Range r (TREE_TYPE (name));
+	  value_range r (TREE_TYPE (name));
 
 	  if (DEBUG_RANGE_CACHE)
 	    fprintf (dump_file, "  %d->%d ",e->src->index, e->dest->index);
@@ -1595,7 +1632,7 @@ ranger_cache::fill_block_cache (tree name, basic_block bb, basic_block def_bb)
 	  // the list.
 	  gcc_checking_assert (!m_on_entry.bb_range_p (name, pred));
 	  m_on_entry.set_bb_range (name, pred, undefined);
-	  m_workback.quick_push (pred);
+	  m_workback.safe_push (pred);
 	}
     }
 
@@ -1631,7 +1668,7 @@ ranger_cache::resolve_dom (vrange &r, tree name, basic_block bb)
   r.set_undefined ();
   edge e;
   edge_iterator ei;
-  Value_Range er (TREE_TYPE (name));
+  value_range er (TREE_TYPE (name));
   FOR_EACH_EDGE (e, ei, bb->preds)
     {
       // If the predecessor is dominated by this block, then there is a back
@@ -1665,7 +1702,7 @@ ranger_cache::range_from_dom (vrange &r, tree name, basic_block start_bb,
   basic_block prev_bb = start_bb;
 
   // Track any inferred ranges seen.
-  Value_Range infer (TREE_TYPE (name));
+  value_range infer (TREE_TYPE (name));
   infer.set_varying (TREE_TYPE (name));
 
   // Range on entry to the DEF block should not be queried.
@@ -1690,7 +1727,7 @@ ranger_cache::range_from_dom (vrange &r, tree name, basic_block start_bb,
 
       // This block has an outgoing range.
       if (gori ().has_edge_range_p (name, bb))
-	m_workback.quick_push (prev_bb);
+	m_workback.safe_push (prev_bb);
       else
 	{
 	  // Normally join blocks don't carry any new range information on
@@ -1714,7 +1751,7 @@ ranger_cache::range_from_dom (vrange &r, tree name, basic_block start_bb,
 		    break;
 		  }
 	      if (all_dom)
-		m_workback.quick_push (prev_bb);
+		m_workback.safe_push (prev_bb);
 	    }
 	}
 
@@ -1740,7 +1777,7 @@ ranger_cache::range_from_dom (vrange &r, tree name, basic_block start_bb,
   // Now process any blocks wit incoming edges that nay have adjustments.
   while (m_workback.length () > start_limit)
     {
-      Value_Range er (TREE_TYPE (name));
+      value_range er (TREE_TYPE (name));
       prev_bb = m_workback.pop ();
       if (!single_pred_p (prev_bb))
 	{
@@ -1793,7 +1830,7 @@ void
 ranger_cache::register_inferred_value (const vrange &ir, tree name,
 				       basic_block bb)
 {
-  Value_Range r (TREE_TYPE (name));
+  value_range r (TREE_TYPE (name));
   if (!m_on_entry.get_bb_range (r, name, bb))
     exit_range (r, name, bb, RFD_READ_ONLY);
   if (r.intersect (ir))

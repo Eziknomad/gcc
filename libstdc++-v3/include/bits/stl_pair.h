@@ -344,6 +344,8 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       explicit(__not_<__and_<__is_implicitly_default_constructible<_T1>,
 			     __is_implicitly_default_constructible<_T2>>>())
       pair()
+      noexcept(is_nothrow_default_constructible_v<_T1>
+		&& is_nothrow_default_constructible_v<_T2>)
       requires is_default_constructible_v<_T1>
 	       && is_default_constructible_v<_T2>
       : first(), second()
@@ -1181,23 +1183,24 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
     struct tuple_element<1, pair<_Tp1, _Tp2>>
     { typedef _Tp2 type; };
 
-  // Forward declare the partial specialization for std::tuple
-  // to work around modules bug PR c++/113814.
-  template<size_t __i, typename... _Types>
-    struct tuple_element<__i, tuple<_Types...>>;
-
 #if __cplusplus >= 201703L
   template<typename _Tp1, typename _Tp2>
     inline constexpr size_t tuple_size_v<pair<_Tp1, _Tp2>> = 2;
 
   template<typename _Tp1, typename _Tp2>
     inline constexpr size_t tuple_size_v<const pair<_Tp1, _Tp2>> = 2;
+#endif
 
+#if __cplusplus >= 201103L
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wc++14-extensions" // variable templates
+#pragma GCC diagnostic ignored "-Wc++17-extensions" // inline variables
   template<typename _Tp>
     inline constexpr bool __is_pair = false;
 
   template<typename _Tp, typename _Up>
     inline constexpr bool __is_pair<pair<_Tp, _Up>> = true;
+#pragma GCC diagnostic pop
 #endif
 
   /// @cond undocumented

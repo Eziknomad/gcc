@@ -463,7 +463,7 @@ is emitted.",
 
 /* Return preferred text (sub)section for function DECL.
    Main purpose of this function is to separate cold, normal and hot
-   functions. STARTUP is true when function is known to be used only 
+   functions. STARTUP is true when function is known to be used only
    at startup (from static constructors or it is main()).
    EXIT is true when function is known to be used only at exit
    (from static destructors).
@@ -2033,6 +2033,18 @@ same size and number of elements as @var{mode}, if such a mode exists.",
  (machine_mode mode),
  default_get_mask_mode)
 
+/* Function to say whether a conditional operation is expensive when
+   compared to non-masked operations.  */
+DEFHOOK
+(conditional_operation_is_expensive,
+ "This hook returns true if masked operation @var{ifn} (really of\n\
+type @code{internal_fn}) should be considered more expensive to use than\n\
+implementing the same operation without masking.  GCC can then try to use\n\
+unconditional operations instead with extra selects.",
+ bool,
+ (unsigned ifn),
+ default_conditional_operation_is_expensive)
+
 /* Function to say whether a masked operation is expensive when the
    mask is all zeros.  */
 DEFHOOK
@@ -2314,10 +2326,10 @@ attribute handlers.  So far this only affects the @var{noinit} and\n\
 DEFHOOK
 (function_attribute_inlinable_p,
  "@cindex inlining\n\
-This target hook returns @code{true} if it is OK to inline @var{fndecl}\n\
-into the current function, despite its having target-specific\n\
-attributes, @code{false} otherwise.  By default, if a function has a\n\
-target specific attribute attached to it, it will not be inlined.",
+This target hook returns @code{false} if the target-specific attributes on\n\
+@var{fndecl} always block it getting inlined, @code{true} otherwise.  By\n\
+default, if a function has a target specific attribute attached to it, it\n\
+will not be inlined.",
  bool, (const_tree fndecl),
  hook_bool_const_tree_false)
 
@@ -2557,7 +2569,7 @@ DEFHOOK
 function version at run-time for a given set of function versions.\n\
 @var{arg} points to the callgraph node of the dispatcher function whose\n\
 body must be generated.",
- tree, (void *arg), NULL) 
+ tree, (void *arg), NULL)
 
 /* Target hook is used to get the dispatcher function for a set of function
    versions.  The dispatcher function is called to invoke the right function
@@ -3351,6 +3363,19 @@ a pointer to int.",
  bool, (ao_ref *ref),
  default_ref_may_alias_errno)
 
+DEFHOOK
+(mode_can_transfer_bits,
+ "Define this to return false if the mode @var{mode} cannot be used\n\
+for memory copying of @code{GET_MODE_SIZE (mode)} units.  This might be\n\
+because a register class allowed for @var{mode} has registers that do\n\
+not transparently transfer every bit pattern or because the load or\n\
+store patterns available for @var{mode} have this issue.\n\
+\n\
+The default is to assume modes with the same precision as size are fine\n\
+to be used.",
+ bool, (machine_mode mode),
+ NULL)
+
 /* Support for named address spaces.  */
 #undef HOOK_PREFIX
 #define HOOK_PREFIX "TARGET_ADDR_SPACE_"
@@ -4025,7 +4050,7 @@ implementation returns the lowest possible value of @var{val}.",
  HOST_WIDE_INT, (poly_int64 val, poly_value_estimate_kind kind),
  default_estimated_poly_value)
 
-/* Permit speculative instructions in delay slots during delayed-branch 
+/* Permit speculative instructions in delay slots during delayed-branch
    scheduling.  */
 DEFHOOK
 (no_speculation_in_delay_slots_p,
@@ -4067,12 +4092,10 @@ allocation.",
    FLAGS has the same meaning as in rtlanal.cc: may_trap_p_1.  */
 DEFHOOK
 (unspec_may_trap_p,
- "This target hook returns nonzero if @var{x}, an @code{unspec} or\n\
-@code{unspec_volatile} operation, might cause a trap.  Targets can use\n\
-this hook to enhance precision of analysis for @code{unspec} and\n\
-@code{unspec_volatile} operations.  You may call @code{may_trap_p_1}\n\
-to analyze inner elements of @var{x} in which case @var{flags} should be\n\
-passed along.",
+ "This target hook returns nonzero if @var{x}, an @code{unspec} might cause\n\
+a trap.  Targets can use this hook to enhance precision of analysis for\n\
+@code{unspec} operations.  You may call @code{may_trap_p_1} to analyze inner\n\
+elements of @var{x} in which case @var{flags} should be passed along.",
  int, (const_rtx x, unsigned flags),
  default_unspec_may_trap_p)
 
@@ -4103,6 +4126,26 @@ used to return a smaller mode than the raw mode to prevent call\n\
 clobbered parts of a register altering the frame register size",
  machine_mode, (int regno),
  default_dwarf_frame_reg_mode)
+
+/* Print out architecture-specific CFI directives to the assembly file.  */
+DEFHOOK
+(output_cfi_directive,
+ "This hook handles architecture-specific CFI directives and prints\n\
+them out to the assembly file @var{f}.\n\
+Return true if a architecture-specific directive was found, false\n\
+otherwise.",
+ bool, (FILE * f, dw_cfi_ref cfi),
+ hook_bool_FILEptr_dwcfiptr_false)
+
+DEFHOOK
+(dw_cfi_oprnd1_desc,
+ "This hook informs the caller what the architecture-specific directives\n\
+takes as a first operand.\n\
+Return true if a architecture-specific directive was found and\n\
+@var{oprnd_type} is set, false otherwise and @var{oprnd_type} is not\n\
+modified.",
+ bool, (dwarf_call_frame_info cfi_opc, dw_cfi_oprnd_type & oprnd_type),
+ hook_bool_dwcfi_dwcfioprndtyperef_false)
 
 /* If expand_builtin_init_dwarf_reg_sizes needs to fill in table
    entries not corresponding directly to registers below
@@ -4513,7 +4556,7 @@ DEFHOOK
  emits a @code{speculation_barrier} instruction if that is defined.",
 rtx, (machine_mode mode, rtx result, rtx val, rtx failval),
  default_speculation_safe_value)
- 
+
 DEFHOOK
 (predict_doloop_p,
  "Return true if we can predict it is possible to use a low-overhead loop\n\
@@ -6389,6 +6432,15 @@ are zero or sign extended depending on if it is\n\
  bool, (int n, struct bitint_info *info),
  default_bitint_type_info)
 
+DEFHOOK
+(mode_for_floating_type,
+"Return machine mode for a C floating point type which is indicated by\n\
+ a given @code{enum tree_index} @var{ti}, @var{ti} should be\n\
+ @code{TI_FLOAT_TYPE}, @code{TI_DOUBLE_TYPE} or @code{TI_LONG_DOUBLE_TYPE}.\n\
+ The default implementation returns @code{SFmode} for @code{TI_FLOAT_TYPE},\n\
+ and @code{DFmode} for @code{TI_DOUBLE_TYPE} or @code{TI_LONG_DOUBLE_TYPE}.",
+ machine_mode, (enum tree_index ti), default_mode_for_floating_type)
+
 HOOK_VECTOR_END (c)
 
 /* Functions specific to the C++ frontend.  */
@@ -6848,7 +6900,7 @@ modifiable by the callee.  The affected registers may be mentioned explicitly\n\
 in the call pattern, or included as clobbers in CALL_INSN_FUNCTION_USAGE.\n\
 The default version of this hook is set to false.  The purpose of this hook\n\
 is to enable the fipa-ra optimization.",
- bool, 
+ bool,
  false)
 
 /* Fill in additional registers set up by prologue into a regset.  */

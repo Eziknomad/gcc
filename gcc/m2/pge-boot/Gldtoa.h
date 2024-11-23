@@ -29,8 +29,6 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 #if !defined (_ldtoa_H)
 #   define _ldtoa_H
 
-#include "config.h"
-#include "system.h"
 #   ifdef __cplusplus
 extern "C" {
 #   endif
@@ -57,7 +55,7 @@ typedef enum {ldtoa_maxsignificant, ldtoa_decimaldigits} ldtoa_Mode;
              error to TRUE if the number is too large or badly formed.
 */
 
-EXTERN long double ldtoa_strtold (void * s, bool *error);
+EXTERN long double ldtoa_strtold (void *s, bool *error);
 
 /*
    ldtoa - converts a LONGREAL, d, into a string.  The address of the
@@ -68,7 +66,7 @@ EXTERN long double ldtoa_strtold (void * s, bool *error);
            sign       does the string have a sign?
 */
 
-EXTERN void * ldtoa_ldtoa (long double d, ldtoa_Mode mode, int ndigits, int *decpt, bool *sign);
+EXTERN void * ldtoa_ldtoa (long double d, int mode, int ndigits, int *decpt, bool *sign);
 #   ifdef __cplusplus
 }
 #   endif
